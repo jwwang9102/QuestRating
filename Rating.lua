@@ -271,13 +271,12 @@ function QR.Rate(questId)
     res.R = res.B > 0 and res.E / res.B or 0
     res.atMax = pl >= maxLevel()
     if res.dungeon then return res end
-    -- standard: the main distribution of same-level quests (user 2026-11-22), R banded around its median
+    -- standard: rank among same-level quests (user 2026-11-23), each 20 % one band
     local scale = cfg
-    local m, sd = D.LevelDist(pl)
-    if m then
-        local a, b = cfg.bandMid or 0.5, cfg.bandOut or 1.5
-        scale = { thresholds = { math.exp(m - b * sd), math.exp(m - a * sd), math.exp(m + a * sd), math.exp(m + b * sd) } }
-        res.median = math.exp(m)
+    local cuts, median = D.LevelDist(pl)
+    if cuts then
+        scale = { thresholds = cuts }
+        res.median = median
     end
     res.cuts = scale.thresholds
     res.position = res.atMax and 2.0 or E.Position(res.R, scale)

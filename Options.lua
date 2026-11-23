@@ -100,8 +100,6 @@ local function build()
     y = keyBox(panel, L.OPT_GEAR_SMALL, "gearSmall", y, 0)
     y = keyBox(panel, L.OPT_GEAR_BIG, "gearBig", y, 0)
     y = keyBox(panel, L.OPT_GEAR_OFFSET, "gearLevelOffset", y, 0)
-    y = keyBox(panel, L.OPT_BAND_MID, "bandMid", y, 0.05, 3)
-    y = keyBox(panel, L.OPT_BAND_OUT, "bandOut", y, 0.1, 5)
 
     for i = 1, 4 do
         -- only the first box shows the row label

@@ -33,9 +33,7 @@ QR.DEFAULTS = {
     nearbyRadius = 300,     -- yards; other quests this close share the route
     nearbyCap = 4,          -- route is divided by at most this many quests
     maxPoints = 400,        -- spawn points considered per objective (performance)
-    thresholds = { 0.7, 1.0, 1.5, 2.5 }, -- R boundaries, only when the database has no same-level distribution
-    bandMid = 0.5,          -- same-level standard: within median +- this many spreads (ln R) = mid
-    bandOut = 1.5,          -- beyond this many spreads = very low / very high; in between low / high
+    thresholds = { 0.7, 1.0, 1.5, 2.5 }, -- R boundaries, only when the database has no same-level rank points
     chainDepth = 6,         -- follow-up quests looked at (chain efficiency, dungeon prerequisite)
     chainDecay = 0.9,       -- XP of the i-th follow-up quest counts x chainDecay^i
     gearSmall = 3,          -- OneForAll upgrade % below this: +0.5 level (user)

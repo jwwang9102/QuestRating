@@ -123,13 +123,15 @@ function D.DropRate(itemID, npcID)
 end
 
 -- Localised dungeon name for a zone ID: the client's area name, else the English name from the database.
--- Same-level standard (QR_GEN.dist): median and robust spread of ln R over quests around this level,
--- each rated at its own level. nil when the database has none.
+-- Same-level standard (QR_GEN.dist): the 20/40/60/80 % points of R over quests around this level, each
+-- rated at its own level (band edges), and the median R. nil when the database has none.
 function D.LevelDist(level)
     local t = QR_GEN and QR_GEN.dist
     if not t or not level then return nil end
     local d = t[math.max(1, math.min(59, level))]
-    if d then return d[1], d[2] end
+    if d and #d >= 5 then
+        return { math.exp(d[1]), math.exp(d[2]), math.exp(d[4]), math.exp(d[5]) }, math.exp(d[3])
+    end
 end
 
 function D.DungeonName(zone)

@@ -87,8 +87,6 @@ QR.L = {
     OPT_GEAR_BIG = "裝備升級門檻 +2 級（%）",
     OPT_GEAR_OFFSET = "任務裝備物品等級 = 等級 + 此值",
     OPT_THRESHOLDS = "無同等級資料時的分級門檻 R",
-    OPT_BAND_MID = "「中」的範圍：同等級中位數 ± 幾個標準差",
-    OPT_BAND_OUT = "超過幾個標準差算「很高／很低」",
     OPT_RESET = "恢復預設值",
     OPT_RESET_DONE = "設定已恢復預設值。",
     OPT_BAD_VALUE = "%s：請輸入數字。",
