@@ -265,14 +265,14 @@ local function buildReasons(res, model, est, cfg)
             if obj.kind == "object" or obj.fromObject then
                 -- picking up: how many, and the walk + use time per object
                 if obj.fromObject and obj.p and g.p and g.p < 0.5 then
-                    cands[#cands + 1] = { t = farm, text = string.format(L.REASON_OBJECT_CHANCE, math.floor(g.p * 100 + 0.5), g.K) }
+                    cands[#cands + 1] = { t = farm, text = string.format(L.REASON_OBJECT_CHANCE, math.floor(g.p * 100 + 0.5), math.floor(g.K + 0.5)) }
                 elseif g.K > 0 then
-                    cands[#cands + 1] = { t = farm, text = string.format(L.REASON_OBJECT, g.K, math.floor(g.tKill + 0.5)) }
+                    cands[#cands + 1] = { t = farm, text = string.format(L.REASON_OBJECT, math.floor(g.K + 0.5), math.floor(g.tKill + 0.5)) }
                 end
             elseif obj.kind == "item" and g.p and g.p < 0.5 and not obj.pUnknown then
-                cands[#cands + 1] = { t = farm, text = string.format(L.REASON_DROP, math.floor(g.p * 100 + 0.5), g.K) }
+                cands[#cands + 1] = { t = farm, text = string.format(L.REASON_DROP, math.floor(g.p * 100 + 0.5), math.floor(g.K + 0.5)) }
             elseif obj.rank == "elite" then
-                cands[#cands + 1] = { t = farm, text = string.format(L.REASON_ELITE, g.K) }
+                cands[#cands + 1] = { t = farm, text = string.format(L.REASON_ELITE, math.floor(g.K + 0.5)) }
             end
             if obj.kind ~= "object" and not obj.fromObject and g.xp == 0 and g.K > 0 then
                 cands[#cands + 1] = { t = farm, text = L.REASON_LOW_MOBXP }

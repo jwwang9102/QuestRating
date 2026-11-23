@@ -179,7 +179,9 @@ function E.Objective(obj, playerLevel, cfg, party)
     if party and (kind == "item" or obj.fromObject) and (obj.needed or obj.N) > 1 and not obj.multiDrop then
         mul = party.n
     end
-    r.K = ceil(obj.N * mul / p)
+    -- expected kills and respawn waves (no rounding up: an 80 % drop of a single mob waits a quarter of a
+    -- respawn on average, not a whole one)
+    r.K = obj.N * mul / p
     if obj.synthetic then
         -- location unknown / spawns incomplete: grinding density, no respawn limit
         r.S, r.A, r.d = 0, 0, cfg.grindDistance
@@ -205,10 +207,23 @@ function E.Objective(obj, playerLevel, cfg, party)
     end
     if not obj.synthetic then
         local effS = max(1, r.S * cfg.shareFactor)
-        local waves = ceil(r.K / effS)
-        r.wait = max(0, waves - 1) * max(0, (obj.rs or cfg.respawn) - effS * r.tKill)
+        local waves = r.K / effS
+        -- shared spawn points (VMaNGOS): once the camp is used up, the other creatures its points show are
+        -- killed too (altPer per target, as normal mobs of the target's level), while the points respawn: a
+        -- wave after the first takes max(respawn, its kills + its other kills)
+        local a = 0
+        if obj.altPer and (kind == "kill" or kind == "item") and not obj.fromObject then
+            a = obj.altPer * (E.FightTime(obj.mobLevel, playerLevel, "normal", cfg) / (party and (party.n - 1) or 1)
+                + select(2, E.GapTerms(cfg)))
+        end
+        r.wait = max(0, waves - 1) * max(0, (obj.rs or cfg.respawn) - effS * (r.tKill + a))
+        if a > 0 and r.K > effS then
+            r.altT = (r.K - effS) * a
+            r.xp = r.xp + (r.K - effS) * obj.altPer * E.KillXP(obj.mobLevel, playerLevel, false)
+                * (party and GROUP_RATE[party.n] / party.n or 1)
+        end
     end
-    r.T = r.K * r.tKill + r.wait
+    r.T = r.K * r.tKill + r.wait + (r.altT or 0)
     return r
 end
 

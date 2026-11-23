@@ -259,7 +259,7 @@ function D.BuildModel(questId)
             index = i, kind = KIND[o.k] or "event", fromObject = o.k == 4, N = o.n, countSource = o.cs,
             p = o.p, pUnknown = o.pu == 1, S = o.S, A = o.A, d = o.d, mobLevel = o.lv, rank = RANK[o.r] or "normal",
             synthetic = o.sy == 1, src = o.src, center = point(o.c), group = o.g, item = o.i, rs = o.rs,
-            dRoute = o.dr or 0, dDetour = o.dd or 0, dWing = o.dw, dMult = o.dm, out = o.ox, levelUnknown = o.lu == 1, multiDrop = o.md == 1,
+            dRoute = o.dr or 0, dDetour = o.dd or 0, dWing = o.dw, dMult = o.dm, out = o.ox, levelUnknown = o.lu == 1, multiDrop = o.md == 1, altPer = o.ap,
         }
         local lo = liveFor(i, o.n)
         obj.liveMatched = lo ~= nil

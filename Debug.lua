@@ -48,11 +48,12 @@ local function debugQuest(questId)
     end
     for _, o in ipairs(est.objectives) do
         local obj = o.obj
-        out("目標%d %s N=%s(%s) p=%s%s K=%d S=%d A=%.0f d=%s t擊殺=%s 等待=%.0f T=%.0f 怪經驗=%.0f Lv=%s %s",
+        out("目標%d %s N=%s(%s) p=%s%s K=%.1f S=%d A=%.0f d=%s t擊殺=%s 等待=%.0f T=%.0f 怪經驗=%.0f Lv=%s %s",
             obj.index, tostring(obj.kind), tostring(obj.N), tostring(obj.countSource),
             f2(o.p), obj.pUnknown and "(不明)" or "", o.K, o.S, o.A, f1(o.d), f1(o.tKill), o.wait, o.T, o.xp,
             f1(obj.mobLevel), tostring(obj.rank or "-"))
         if obj.src then out("    來源 %s", obj.src) end
+        if o.altT then out("    共用生成點：另清別種怪 %.0f 秒（每隻目標 %.2f 隻）", o.altT, obj.altPer or 0) end
         if obj.synthetic then out("    %s：擊殺以練功密度估算", obj.center and L.SPAWNS_INCOMPLETE or L.LOCATION_UNKNOWN) end
     end
     for gi, g in pairs(est.groups) do
