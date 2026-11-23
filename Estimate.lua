@@ -220,8 +220,11 @@ function E.Objective(obj, playerLevel, cfg, party)
         end
         r.wait = max(0, waves - 1) * max(0, (obj.rs or cfg.respawn) - effS * (r.tKill + a))
         if a > 0 and r.K > effS then
-            r.altT = (r.K - effS) * a
-            r.xp = r.xp + (r.K - effS) * obj.altPer * E.KillXP(obj.mobLevel, playerLevel, false)
+            -- other kills: altPer per target beyond the first wave, plus the others already on the points you
+            -- clear first (about one point's worth, altPer x presence: exact for a single point)
+            local nAlt = r.K - effS + (obj.presence or 1)
+            r.altT = nAlt * a
+            r.xp = r.xp + nAlt * obj.altPer * E.KillXP(obj.mobLevel, playerLevel, false)
                 * (party and GROUP_RATE[party.n] / party.n or 1)
         end
     end
@@ -271,8 +274,7 @@ function E.Quest(model, playerLevel, cfg, nearby, party)
     res.TrouteAlone = tRoute
     res.Troute = res.TrouteAlone / share
     res.Tescort = tEscort
-    -- quests already in the log only still need the turn-in: half the fixed talk time
-    res.Tfixed = cfg.fixedTime * (model.inLog and 0.5 or 1)
+    res.Tfixed = cfg.fixedTime -- accept + turn-in talk, also for a logged quest (user 2026-11-23)
     res.T = res.Troute + res.Tescort + res.Tfarm + res.Tfixed
     res.XP = (model.questXP or 0) + res.mobXP
     return res
@@ -393,12 +395,12 @@ function E.DungeonPlan(model, playerLevel, cfg, noRoute, shared)
 end
 
 -- companions = { {id, xp, t}, ... }: the other quests the run can do, each its quest XP x the part the route
--- finishes, and its turn-in time.
+-- finishes, and its talk time.
 function E.Dungeon(model, playerLevel, cfg, companions)
     local run = model.run
     local res = { Tfarm = 0, mobXP = 0, wait = 0, objectives = {}, groups = {}, share = 1, Tescort = 0,
                   dungeon = true, Trun = run.T, runs = 0, companions = {}, otherXP = 0, otherT = 0, runXP = 0 }
-    res.Tfixed = cfg.fixedTime * (model.inLog and 0.5 or 1)
+    res.Tfixed = cfg.fixedTime -- accept + turn-in talk, also for a logged quest (user 2026-11-23)
     local qxp = model.questXP or 0
     if model.ready then -- only the turn-in is left
         local _, tf = E.TripTimes(model, playerLevel, cfg)

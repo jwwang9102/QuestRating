@@ -279,6 +279,10 @@ function D.BuildModel(questId)
             if (o.N or 0) > 0 and not (o.kind == "event" and not o.liveMatched) then left = true end
         end
         model.ready = not left
+        -- progress on any objective: you have been to the targets (user 2026-11-23)
+        for _, o in ipairs(model.objectives) do
+            if o.needed and (o.N or 0) < o.needed then model.progress = true end
+        end
     end
     -- the client knows best (also covers delivery quests without objectives)
     if model.inLog and C_QuestLog and C_QuestLog.IsComplete then
@@ -286,7 +290,8 @@ function D.BuildModel(questId)
         if ok and complete then model.ready = true end
     end
 
-    -- route; a quest already in the log has been picked up, so no walk from the quest giver.
+    -- route: giver -> targets -> finisher. A logged quest keeps it all until it has progress (then the way
+    -- to the first target is behind you) or is ready (then only the way to the turn-in is left).
     -- "B" + segment = ship / zeppelin of that segment, value in seconds. "E" + segment = the escort, in
     -- seconds at the escorted NPC's pace: still to do while the quest is open, gone once it is ready.
     model.routeLegs, model.routeYards = {}, 0
@@ -299,7 +304,7 @@ function D.BuildModel(questId)
             if not model.ready then
                 model.routeLegs[#model.routeLegs + 1] = { label = label, seconds = lg[2], escort = true }
             end
-        elseif not (model.inLog and label == "start") then
+        elseif not ((model.ready or model.progress) and label == "start") and not (model.ready and label == "target") then
             if boat then
                 model.routeLegs[#model.routeLegs + 1] = { label = label, seconds = lg[2], boat = true }
             else

@@ -40,15 +40,26 @@ local function maxLevel()
     return (GetMaxPlayerLevel and GetMaxPlayerLevel()) or 60
 end
 
--- Other quests in the log whose main area is within nearbyRadius of this quest's.
+local completed, inLogQuest, openToYou -- below
+
+-- Other quests near this one (database rec.nb: main point within the build's nearbyRadius, 300 yd) that you
+-- can do along: taken or takeable now, not done, not exclusive with this one (user 2026-11-23: quests not
+-- taken share the route too). Mirror of the build's nearby_count.
 local function countNearby(model, cfg)
-    if not model.center then return 0, {} end
+    local rec = D.Record(model.id)
+    if not model.center or not rec or not rec.nb then return 0, {} end
+    local pl = UnitLevel("player") or 1
+    local exclusive = {}
+    for _, x in ipairs(rec.ex or {}) do exclusive[x] = true end
     local list = {}
-    for _, otherId in ipairs(D.LogQuests()) do
-        if otherId ~= model.id then
-            local other = getModel(otherId)
-            local d = other and other.center and E.Dist(model.center, other.center)
-            if d and d <= cfg.nearbyRadius then list[#list + 1] = otherId end
+    for _, id in ipairs(rec.nb) do
+        local orec = D.Record(id)
+        if orec and orec.dg ~= 1 and not exclusive[id] and openToYou(id, orec, pl) then
+            local mine = false
+            for _, x in ipairs(orec.ex or {}) do if x == model.id then mine = true end end
+            local c = orec.c
+            local d = (not mine) and c and model.center and E.Dist(model.center, { inst = c[1], x = c[2], y = c[3] })
+            if d and d <= cfg.nearbyRadius then list[#list + 1] = id end
         end
     end
     return #list, list
@@ -58,7 +69,7 @@ end
 -- Follow-up quests (plan sections 3.7 and 5). Database field nq = { {questId, yards}, ... }:
 -- next in chain, the quest a breadcrumb leads to, quests that need this one.
 ---------------------------------------------------------------------------------------------
-local function completed(questId)
+function completed(questId)
     return C_QuestLog and C_QuestLog.IsQuestFlaggedCompleted and C_QuestLog.IsQuestFlaggedCompleted(questId)
 end
 
@@ -106,10 +117,25 @@ end
 -- Other quests the same dungeon run can do (user 2026-11-23), as E.Dungeon candidates { {id, xp, t}, ... }:
 -- same main wing, open to you, not done, taken or takeable now (min level, prerequisites done), not
 -- grey, not exclusive with one done or taken. Each adds its quest XP x the part the route finishes and its
--- turn-in time (its own catch-up is not part of the shared run). Mirror of the build's run_companions
+-- talk time (its own catch-up is not part of the shared run). Mirror of the build's run_companions
 -- (offline, prerequisites outside the wing count as done).
-local function inLogQuest(id)
+function inLogQuest(id)
     return C_QuestLog and C_QuestLog.GetLogIndexForQuestID and (C_QuestLog.GetLogIndexForQuestID(id) or 0) > 0
+end
+-- open to you, not done, and taken or takeable now (min level, not grey, prerequisites done)
+function openToYou(id, rec, pl)
+    if not (D.Available(rec) and not completed(id)) then return false end
+    if inLogQuest(id) then return true end
+    if (rec.ml or 0) > pl or (rec.lv or 0) <= E.GrayLevel(pl) then return false end
+    for _, x in ipairs(rec.ex or {}) do -- an exclusive sibling done or taken
+        if completed(x) or inLogQuest(x) then return false end
+    end
+    for _, pre in ipairs(rec.pa or {}) do if not completed(pre) then return false end end
+    if rec.p1 and #rec.p1 > 0 then
+        for _, pre in ipairs(rec.p1) do if completed(pre) then return true end end
+        return false
+    end
+    return true
 end
 local function runCompanions(model, pl, cfg)
     local out = {}
@@ -125,24 +151,14 @@ local function runCompanions(model, pl, cfg)
     end
     for _, id in ipairs(list) do
         local rec = D.Record(id)
-        if not taken[id] and rec and D.Available(rec) and not completed(id) and not excluded(rec) then
-            local ok = inLogQuest(id)
-            if not ok and (rec.ml or 0) <= pl and (rec.lv or 0) > E.GrayLevel(pl) then
-                ok = true
-                for _, pre in ipairs(rec.pa or {}) do if not completed(pre) then ok = false end end
-                if ok and rec.p1 and #rec.p1 > 0 then
-                    local any = false
-                    for _, pre in ipairs(rec.p1) do if completed(pre) then any = true end end
-                    ok = any
-                end
-            end
-            local other = ok and getModel(id)
+        if not taken[id] and rec and not excluded(rec) and openToYou(id, rec, pl) then
+            local other = getModel(id)
             if other and other.run and #other.missing == 0 then
                 taken[id] = true
                 -- its share: what the base route finishes (its own detour is its own business)
                 local op = (not other.ready) and E.DungeonPlan(other, pl, cfg, false, true) or nil
                 local frac = op and op.frac or 1
-                out[#out + 1] = { id = id, xp = frac * (other.questXP or 0), t = cfg.fixedTime * (other.inLog and 0.5 or 1) }
+                out[#out + 1] = { id = id, xp = frac * (other.questXP or 0), t = cfg.fixedTime }
             end
         end
     end
