@@ -294,7 +294,9 @@ local function buildReasons(res, model, est, cfg)
             reasons[#reasons + 1] = text
         end
     end
-    if res.keyQuest == "t" then add(L.REASON_KEY_TOP)
+    if res.keyQuest == "t" then
+        local krec = D.Record(model.id)
+        add(krec and krec.kw == "skill" and L.REASON_KEY_SKILL or L.REASON_KEY_TOP)
     elseif res.keyQuest == "k" then
         local rec = D.Record(model.id)
         add(string.format(L.REASON_KEY_PLUS, L.KEY_KIND[rec and rec.kw] or ""))
@@ -413,9 +415,9 @@ function QR.Rate(questId)
         -- not estimable: say what is missing instead of rating on a guess
         local rec = D.Record(questId)
         if rec and rec.kq == "t" then
-            -- an attunement every member needs: the best rating even without an estimate (user 2026-11-23)
+            -- an attunement every member needs, or a new skill: the best rating even without an estimate (user 2026-11-23)
             res.level, res.keyQuest = 4, "t"
-            res.reasons = { L.REASON_KEY_TOP }
+            res.reasons = { rec.kw == "skill" and L.REASON_KEY_SKILL or L.REASON_KEY_TOP }
             for _, m in ipairs(#model.missing > 0 and model.missing or { L.NO_DATA }) do res.reasons[#res.reasons + 1] = m end
             return res
         end
