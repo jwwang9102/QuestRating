@@ -87,7 +87,7 @@ local KIND = { [1] = "kill", [2] = "item", [3] = "object", [4] = "item", [5] = "
 local RANK = { [1] = "elite", [2] = "rare" }
 local FLAG = {
     DU = "DROP_UNKNOWN", CU = "COUNT_UNKNOWN", RU = "ROUTE_UNKNOWN", LU = "LOCATION_UNKNOWN",
-    SI = "SPAWNS_INCOMPLETE", FM = "FEW_MOBS", EL = "ELITE", RO = "RARE_ONLY", DE = "DROP_EMULATED",
+    SI = "SPAWNS_INCOMPLETE", FM = "FEW_MOBS", EL = "ELITE", RO = "RARE_ONLY", DE = "DROP_EMULATED", MU = "MULTI_UNKNOWN",
 }
 local LEG = { s = "start", t = "target", f = "finish", d = "deliver" }
 
@@ -222,6 +222,7 @@ function D.BuildModel(questId)
     local model = {
         id = questId, name = title or rec.t, level = rec.lv, requiredLevel = rec.ml,
         questXP = D.QuestXP(rec, pl), dungeon = rec.dg == 1, noData = rec.nd and true or false,
+        group = rec.gq == 1, -- group quest: a party of 3-5 (user 2026-11-23)
         center = point(rec.c), map = rec.m, flags = {}, extra = {}, objectives = {}, groups = {},
         inLog = inLog(questId), missing = {},
     }
@@ -258,7 +259,7 @@ function D.BuildModel(questId)
             index = i, kind = KIND[o.k] or "event", fromObject = o.k == 4, N = o.n, countSource = o.cs,
             p = o.p, pUnknown = o.pu == 1, S = o.S, A = o.A, d = o.d, mobLevel = o.lv, rank = RANK[o.r] or "normal",
             synthetic = o.sy == 1, src = o.src, center = point(o.c), group = o.g, item = o.i, rs = o.rs,
-            dRoute = o.dr or 0, dDetour = o.dd or 0, dWing = o.dw, dMult = o.dm, out = o.ox, levelUnknown = o.lu == 1,
+            dRoute = o.dr or 0, dDetour = o.dd or 0, dWing = o.dw, dMult = o.dm, out = o.ox, levelUnknown = o.lu == 1, multiDrop = o.md == 1,
         }
         local lo = liveFor(i, o.n)
         obj.liveMatched = lo ~= nil
@@ -354,7 +355,6 @@ function D.BuildModel(questId)
         end
         if rec.eu then miss(L.MISSING_ESCORT) end -- escort with no path and nothing to measure
         if rec.pv then miss(L.MISSING_PVP) end   -- battleground quest
-        if rec.gq then miss(L.MISSING_GROUP) end -- group quest with an elite: no solo time from data
         for i, o in ipairs(rec.o or {}) do
             local obj = model.objectives[i]
             if o.lu == 1 and obj and (obj.N or 0) > 0 then miss(L.MISSING_MOB_LEVEL) end -- level-scaling mob

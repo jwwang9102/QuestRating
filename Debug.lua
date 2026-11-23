@@ -75,6 +75,10 @@ local function debugQuest(questId)
         est.share, est.TrouteAlone, est.Troute)
     out("T農怪=%.0f  等待=%.0f  T護送=%.0f  T固定=%.0f  總T=%.0f 秒 (%.1f 分)", est.Tfarm, est.wait, est.Tescort or 0,
         est.Tfixed, est.T, est.T / 60)
+    if est.party then
+        out("團體任務：%d 人隊伍（1 補 %d 輸出：戰鬥時間 = 單刷 / %d；打怪經驗 x %.3f/%d）", est.party, est.party - 1,
+            est.party - 1, QR.Estimate.GROUP_RATE[est.party], est.party)
+    end
     if m.objectives then
         for _, obj in ipairs(m.objectives) do
             if obj.rs then out("    目標%d 物件重生 %d 秒（伺服器資料）", obj.index, obj.rs) end

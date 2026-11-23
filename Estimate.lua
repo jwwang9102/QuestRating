@@ -151,10 +151,19 @@ function E.Density(cluster, cfg)
     return S, A, d
 end
 
+-- Group quests (user 2026-11-23): a party of 3-5, whichever is best. Kill XP: the server's group rate
+-- (2 players 1.0, 3 1.166, 4 1.3, 5 1.4) split over the members. Fight time: your solo fight time (elites
+-- included) / (party - 1): one member heals, the others deal damage as you do (user 2026-11-23: N to N-1
+-- times as fast, with a healer). Kill credit is shared; items to collect several of x party (one per corpse)
+-- unless the item drops for every member (unknown for every such item in this build: flagged MULTI_UNKNOWN).
+local GROUP_RATE = { 1.0, 1.0, 1.166, 1.3, 1.4 }
+E.GROUP_RATE = GROUP_RATE
+
 -- obj: { kind = "kill"|"item"|"object"|"event"|"vendor"|"none", N, p (0..1 or nil),
 --        cluster, mobLevel, rank, elite, fromObject, rs (object respawn seconds, server data) }
+-- party: nil (alone) or { n = members }
 -- returns { K, S, A, d, tKill, wait, T, xp, p }
-function E.Objective(obj, playerLevel, cfg)
+function E.Objective(obj, playerLevel, cfg, party)
     local r = { K = 0, S = 0, A = 0, d = 0, tKill = 0, wait = 0, T = 0, xp = 0, p = obj.p }
     local kind = obj.kind
     if kind == "event" or kind == "vendor" or kind == "none" or (obj.N or 0) <= 0 then
@@ -166,7 +175,11 @@ function E.Objective(obj, playerLevel, cfg)
     if kind ~= "item" then p = 1 end
     if not p or p <= 0 then p = obj.fromObject and 1 or cfg.defaultDropRate end
     r.p = p
-    r.K = ceil(obj.N / p)
+    local mul = 1
+    if party and (kind == "item" or obj.fromObject) and (obj.needed or obj.N) > 1 and not obj.multiDrop then
+        mul = party.n
+    end
+    r.K = ceil(obj.N * mul / p)
     if obj.synthetic then
         -- location unknown / spawns incomplete: grinding density, no respawn limit
         r.S, r.A, r.d = 0, 0, cfg.grindDistance
@@ -181,8 +194,14 @@ function E.Objective(obj, playerLevel, cfg)
         r.tKill = cfg.objectLootTime + walk
         r.xp = 0
     else
-        r.tKill = E.FightTime(obj.mobLevel, playerLevel, obj.rank, cfg) + select(2, E.GapTerms(cfg)) + walk
-        r.xp = E.KillXP(obj.mobLevel, playerLevel, obj.rank == "elite") * r.K
+        local fight = E.FightTime(obj.mobLevel, playerLevel, obj.rank, cfg)
+        local xp = E.KillXP(obj.mobLevel, playerLevel, obj.rank == "elite")
+        if party then
+            fight = fight / (party.n - 1)
+            xp = xp * GROUP_RATE[party.n] / party.n
+        end
+        r.tKill = fight + select(2, E.GapTerms(cfg)) + walk
+        r.xp = xp * r.K
     end
     if not obj.synthetic then
         local effS = max(1, r.S * cfg.shareFactor)
@@ -195,12 +214,21 @@ end
 
 -- model: { groups = { { obj, obj, ... }, ... }, routeYards = number|nil, questXP = number }
 -- Objectives inside a group share mobs and run concurrently (max); groups add up.
-function E.Quest(model, playerLevel, cfg, nearby)
-    local res = { Tfarm = 0, mobXP = 0, wait = 0, objectives = {}, groups = {} }
+-- A group quest (model.group) is estimated for a party of 3, 4 and 5; the best one is kept (res.party).
+function E.Quest(model, playerLevel, cfg, nearby, party)
+    if model.group and not party then
+        local best
+        for n = 3, 5 do
+            local r = E.Quest(model, playerLevel, cfg, nearby, { n = n })
+            if not best or (r.T > 0 and r.XP / r.T > best.XP / max(1, best.T)) then best = r end
+        end
+        return best
+    end
+    local res = { Tfarm = 0, mobXP = 0, wait = 0, objectives = {}, groups = {}, party = party and party.n }
     for gi, group in ipairs(model.groups) do
         local best
         for _, obj in ipairs(group) do
-            local o = E.Objective(obj, playerLevel, cfg)
+            local o = E.Objective(obj, playerLevel, cfg, party)
             o.obj = obj
             res.objectives[#res.objectives + 1] = o
             if not best or o.T > best.T then best = o end

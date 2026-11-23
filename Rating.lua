@@ -212,6 +212,7 @@ local function buildReasons(res, model, est, cfg)
         end
     end
     if model.ready then add(L.REASON_READY) end
+    if est.party then add(string.format(L.REASON_GROUP, est.party)) end
     -- dungeon run: which run, how long, more runs or farming outside, what the group needs
     if est.dungeon and not model.ready then
         local run = model.run
@@ -291,7 +292,7 @@ local function buildReasons(res, model, est, cfg)
     -- data reliability
     for _, f in ipairs(model.flags) do
         if f == L.DROP_UNKNOWN or f == L.COUNT_UNKNOWN or f == L.ROUTE_UNKNOWN or f == L.LOCATION_UNKNOWN or f == L.SPAWNS_INCOMPLETE
-            or f == L.DROP_EMULATED then
+            or f == L.DROP_EMULATED or f == L.MULTI_UNKNOWN then
             add(f)
         end
     end
