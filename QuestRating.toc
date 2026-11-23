@@ -1,0 +1,20 @@
+## Interface: 16001
+## Title: QuestRating
+## Notes: Rates quests by estimated time efficiency (XP per hour vs. grinding). Own quest database; works with or without Questie.
+## Notes-zhTW: 依預估花費時間評估任務推薦度。自帶任務資料庫，有沒有裝 Questie 都能用。
+## Author: QuestRating
+## Version: 0.1.0
+## OptionalDeps: Questie, OneForAll
+## SavedVariables: QuestRatingDB
+
+Locale.lua
+Core.lua
+Estimate.lua
+Data\Generated.lua
+Data.lua
+Gear.lua
+Rating.lua
+UI.lua
+Blizzard.lua
+Options.lua
+Debug.lua
