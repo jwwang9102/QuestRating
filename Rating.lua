@@ -143,26 +143,93 @@ local function runCompanions(model, pl, cfg)
     local list = wing and QR_GEN.wingQuests and QR_GEN.wingQuests[wing]
     if not list or model.ready then return out end
     local taken = { [model.id] = true }
-    local function excluded(rec)
+    local function excluded(rec, id)
         for _, x in ipairs(rec.ex or {}) do
             if taken[x] or completed(x) then return true end
+        end
+        for t in pairs(taken) do -- the other way round: a quest taken is exclusive with this one
+            local trec = D.Record(t)
+            for _, x in ipairs(trec and trec.ex or {}) do if x == id then return true end end
         end
         return false
     end
     for _, id in ipairs(list) do
         local rec = D.Record(id)
-        if not taken[id] and rec and not excluded(rec) and openToYou(id, rec, pl) then
+        if not taken[id] and rec and not excluded(rec, id) and openToYou(id, rec, pl) then
             local other = getModel(id)
-            if other and other.run and #other.missing == 0 then
+            if other and other.run and other.insideLeft and not other.offRoute and not other.noData
+                and #other.missing == 0 then -- something to do in the run, with data
                 taken[id] = true
                 -- its share: what the base route finishes (its own detour is its own business)
                 local op = (not other.ready) and E.DungeonPlan(other, pl, cfg, false, true) or nil
                 local frac = op and op.frac or 1
-                out[#out + 1] = { id = id, xp = frac * (other.questXP or 0), t = cfg.fixedTime }
+                -- its quest XP at the level rated (a follow-up in a chain: that level; the client's live value
+                -- only at your own level)
+                local qxp = (other.xpFromClient and pl == (UnitLevel("player") or 1)) and other.questXP
+                    or D.QuestXP(rec, pl)
+                out[#out + 1] = { id = id, xp = frac * (qxp or 0), t = cfg.fixedTime }
             end
         end
     end
     return out
+end
+
+-- The dungeon's other quests still to do (inside or outside): they share an open-world route (user
+-- 2026-11-23). Same filters as runCompanions without "something inside". Mirror of run_companions(need_inside=False).
+local function runSiblings(model, pl)
+    local wing = model.run and model.run.wings[1]
+    local list = wing and QR_GEN.wingQuests and QR_GEN.wingQuests[wing]
+    if not list or model.ready then return 0 end
+    local taken, n = { [model.id] = true }, 0
+    for _, id in ipairs(list) do
+        local rec = D.Record(id)
+        if not taken[id] and rec and openToYou(id, rec, pl) then
+            local ex = false
+            for _, x in ipairs(rec.ex or {}) do if taken[x] or completed(x) then ex = true end end
+            for t in pairs(taken) do
+                local trec = D.Record(t)
+                for _, x in ipairs(trec and trec.ex or {}) do if x == id then ex = true end end
+            end
+            local other = not ex and getModel(id)
+            if other and other.run and not other.offRoute and not other.noData and #other.missing == 0 then
+                taken[id] = true; n = n + 1
+            end
+        end
+    end
+    return n
+end
+
+-- A dungeon quest (user 2026-11-23). What is left all doable outside (no objective inside the run left): an
+-- ordinary quest, its own route shared the usual way with nearby quests and with the run's other quests still to
+-- do (solve "outonly"). Else the run, or, when every objective can be done outside too, the better of the run and
+-- the open world (solve "in" / "out"). withNearby false: no route sharing (a follow-up in a chain). Returns est,
+-- nearby count, list. Mirror of the build's rate_dungeon.
+local function rateDungeonQuest(model, pl, cfg, withNearby)
+    local comps = runCompanions(model, pl, cfg)
+    local function open()
+        local om = D.OpenModel(model, cfg)
+        if not om then return nil end
+        local n, list = 0, {}
+        if withNearby then
+            n, list = countNearby(model, cfg)
+            n = n + runSiblings(model, pl)
+        end
+        local o = E.Quest(om, pl, cfg, n)
+        return o, n, list
+    end
+    if not model.insideLeft then
+        local o, n, list = open()
+        if o then o.solve = "outonly"; return o, n, list end
+    end
+    local est = E.Dungeon(model, pl, cfg, comps)
+    if model.insideLeft then
+        local o, n, list = open()
+        if o and o.T > 0 and est.T > 0 then
+            if o.XP / o.T > est.XP / est.T then o.solve = "out"; return o, n, list end
+            est.solve = "in"
+        end
+    end
+    return est, 0, {}
 end
 
 -- One quest on its own at player level `lv` (no route sharing, no chain, no bonus); nil when it
@@ -171,7 +238,7 @@ end
 local function soloEstimate(questId, lv, cfg)
     local m = getModel(questId)
     if not m or m.noData or (m.dungeon and not m.run) or #m.missing > 0 then return nil end
-    local est = m.run and E.Dungeon(m, lv, cfg, runCompanions(m, lv, cfg)) or E.Quest(m, lv, cfg, 0)
+    local est = m.run and rateDungeonQuest(m, lv, cfg, false) or E.Quest(m, lv, cfg, 0)
     if est.T <= 0 then return nil end
     -- at your own level a logged quest keeps the client's live XP (review 2026-11-23)
     if not (lv == (UnitLevel("player") or 1) and m.xpFromClient) then
@@ -227,10 +294,20 @@ local function buildReasons(res, model, est, cfg)
             reasons[#reasons + 1] = text
         end
     end
+    if res.keyQuest == "t" then add(L.REASON_KEY_TOP)
+    elseif res.keyQuest == "k" then
+        local rec = D.Record(model.id)
+        add(string.format(L.REASON_KEY_PLUS, L.KEY_KIND[rec and rec.kw] or ""))
+    end
     if model.ready then add(L.REASON_READY) end
     if est.party then add(string.format(L.REASON_GROUP, est.party)) end
+    -- dungeon quest: in the run or in the open world, the better one (user 2026-11-23)
+    if est.solve == "outonly" then add(L.REASON_SOLVE_OUTONLY)
+    elseif est.solve == "out" then add(L.REASON_SOLVE_OUT)
+    elseif est.solve == "in" then add(L.REASON_SOLVE_IN) end
     -- dungeon run: which run, how long, more runs or farming outside, what the group needs
-    if est.dungeon and not model.ready then
+    if est.dungeon and est.mode == "after" and not model.ready then add(L.REASON_AFTER_RUN) end
+    if est.dungeon and not model.ready and est.mode ~= "after" then
         local run = model.run
         add(string.format(L.REASON_RUN, D.WingName(run.wings[1]), math.max(1, math.floor(run.T / 60 + 0.5))))
         if model.runDone then add(L.REASON_RUN_PROGRESS) end
@@ -246,6 +323,7 @@ local function buildReasons(res, model, est, cfg)
         add(res.prereqZone > 0 and string.format(L.REASON_DUNGEON_PREREQ, D.DungeonName(res.prereqZone))
             or L.REASON_DUNGEON_PREREQ_NONAME)
     end
+    if res.atMax then add(L.REASON_MAX_BASE) end
     if model.noXP and not res.atMax then add(L.REASON_NO_XP) end
     -- bonus sources are always named
     if res.gearText then add(res.gearText) end
@@ -260,14 +338,15 @@ local function buildReasons(res, model, est, cfg)
     if res.level <= 1 and not res.atMax then
         local cands = {}
         if est.wait > 0 then
-            local S, objects = 0, false
+            -- targets up at a time (spawn points x the chance a point shows the target), not the points
+            local S, objects = -1, false
             for _, g in pairs(est.groups) do
-                if g.wait > 0 and g.S >= S then
-                    S, objects = g.S, g.obj.kind == "object" or g.obj.fromObject
+                if g.wait > 0 and (g.effS or 0) >= S then
+                    S, objects = g.effS or 0, g.obj.kind == "object" or g.obj.fromObject
                 end
             end
             cands[#cands + 1] = { t = est.wait, text = string.format(objects and L.REASON_RESPAWN_OBJECT or L.REASON_RESPAWN,
-                S, math.floor(est.wait / 60 + 0.5)) }
+                math.max(0, S), math.floor(est.wait / 60 + 0.5)) }
         end
         if est.Troute > 0 then
             cands[#cands + 1] = { t = est.Troute, text = string.format(L.REASON_ROUTE, math.max(1, math.floor(est.Troute / 60 + 0.5))) }
@@ -277,7 +356,10 @@ local function buildReasons(res, model, est, cfg)
         end
         for _, g in pairs(est.groups) do
             local obj = g.obj
-            local farm = g.T - g.wait
+            local farm = g.T - g.wait - (g.altT or 0)
+            if (g.altT or 0) > 0 then
+                cands[#cands + 1] = { t = g.altT, text = string.format(L.REASON_ALT, math.max(1, math.floor(g.altT / 60 + 0.5))) }
+            end
             if obj.kind == "object" or obj.fromObject then
                 -- picking up: how many, and the walk + use time per object
                 if obj.fromObject and obj.p and g.p and g.p < 0.5 then
@@ -287,7 +369,7 @@ local function buildReasons(res, model, est, cfg)
                 end
             elseif obj.kind == "item" and g.p and g.p < 0.5 and not obj.pUnknown then
                 cands[#cands + 1] = { t = farm, text = string.format(L.REASON_DROP, math.floor(g.p * 100 + 0.5), math.floor(g.K + 0.5)) }
-            elseif obj.rank == "elite" then
+            elseif obj.rank == "elite" and not est.party then
                 cands[#cands + 1] = { t = farm, text = string.format(L.REASON_ELITE, math.floor(g.K + 0.5)) }
             end
             if obj.kind ~= "object" and not obj.fromObject and g.xp == 0 and g.K > 0 then
@@ -329,15 +411,42 @@ function QR.Rate(questId)
     end
     if model.noData or #model.missing > 0 then
         -- not estimable: say what is missing instead of rating on a guess
+        local rec = D.Record(questId)
+        if rec and rec.kq == "t" then
+            -- an attunement every member needs: the best rating even without an estimate (user 2026-11-23)
+            res.level, res.keyQuest = 4, "t"
+            res.reasons = { L.REASON_KEY_TOP }
+            for _, m in ipairs(#model.missing > 0 and model.missing or { L.NO_DATA }) do res.reasons[#res.reasons + 1] = m end
+            return res
+        end
+        if res.playerLevel >= maxLevel() then
+            -- max level: XP efficiency is not rated (base 中 + reward and key-quest bonus), so missing time
+            -- data does not matter (user 2026-11-23, e.g. Tier 0.5 quests)
+            res.atMax, res.position = true, 2.0
+            res.bonus, res.gearText, res.gear = QR.Gear.Bonus(rec, cfg)
+            res.level = E.Level(2.0, res.bonus)
+            res.reasons = { L.REASON_MAX_BASE }
+            if rec and rec.kq == "k" then
+                res.level, res.keyQuest = E.Level(2.0, (res.bonus or 0) + 2), "k"
+                res.reasons[#res.reasons + 1] = string.format(L.REASON_KEY_PLUS, L.KEY_KIND[rec.kw] or "")
+            end
+            if res.gearText then res.reasons[#res.reasons + 1] = res.gearText end
+            if res.gear and res.gear.loading then res.reasons[#res.reasons + 1] = L.REASON_GEAR_LOADING end
+            -- what could not be estimated (no effect on the rating at max level)
+            for _, m in ipairs(#model.missing > 0 and model.missing or { L.NO_DATA }) do res.reasons[#res.reasons + 1] = m end
+            return res
+        end
         res.noData = true
-        res.reasons = #model.missing > 0 and model.missing or { L.NO_DATA }
+        res.reasons = {} -- a new list: model.missing is cached with the model
+        if rec and rec.kq == "k" then res.reasons[1] = string.format(L.REASON_KEY_PLUS, L.KEY_KIND[rec.kw] or "") end
+        for _, m in ipairs(#model.missing > 0 and model.missing or { L.NO_DATA }) do res.reasons[#res.reasons + 1] = m end
         return res
     end
     local pl = res.playerLevel
     local nearby, nearbyList, est = 0, {}, nil
     if model.run then
-        -- dungeon quest: the run with the other quests it can do
-        est = E.Dungeon(model, pl, cfg, runCompanions(model, pl, cfg))
+        -- dungeon quest: the run with the other quests it can do, or the open world
+        est, nearby, nearbyList = rateDungeonQuest(model, pl, cfg, true)
     else
         nearby, nearbyList = countNearby(model, cfg)
         est = E.Quest(model, pl, cfg, nearby)
@@ -357,7 +466,7 @@ function QR.Rate(questId)
     res.cuts = scale.thresholds
     res.position = res.atMax and 2.0 or E.Position(res.R, scale)
     if nearby > 0 and not res.atMax then
-        local alone = E.Quest(model, pl, cfg, 0)
+        local alone = E.Quest(model.run and D.OpenModel(model, cfg) or model, pl, cfg, 0) -- open-world dungeon quest: its open model
         local Ralone = (alone.T > 0 and alone.XP / alone.T * 3600 or 0) / res.B
         res.Ralone = Ralone
         res.nearbyRaised = E.Level(E.Position(Ralone, scale), 0) < E.Level(res.position, 0)
@@ -379,6 +488,14 @@ function QR.Rate(questId)
     -- reward gear (OneForAll)
     res.bonus, res.gearText, res.gear = QR.Gear.Bonus(D.Record(questId), cfg)
     res.level = E.Level(res.position, res.bonus)
+    -- key quests (user 2026-11-23; _tools/calibration/key_quests.tsv): every member needs it to enter a
+    -- dungeon / raid / area -> the best rating; a dungeon key (one per group), a new reputation or system -> +2
+    local rec = D.Record(questId)
+    if rec and rec.kq == "t" then
+        res.level, res.keyQuest = 4, "t"
+    elseif rec and rec.kq == "k" then
+        res.level, res.keyQuest = E.Level(res.position, (res.bonus or 0) + 2), "k"
+    end
     res.reasons = buildReasons(res, model, est, cfg)
     return res
 end

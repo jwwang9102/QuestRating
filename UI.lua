@@ -132,7 +132,7 @@ function UI.FillRating(tt, questId)
     tt:AddLine(colorize(L.RATING[res.level], COLOR[res.level] or GRAY))
     for _, r in ipairs(res.reasons or {}) do tt:AddLine(r, 1, 1, 1, true) end
     local est = res.est
-    if est and not res.dungeon then
+    if est then
         tt:AddLine(string.format(L.TT_TIME, math.max(1, math.floor(est.T / 60 + 0.5)), est.XP), 0.62, 0.62, 0.62)
         if not res.atMax then
             if res.median then

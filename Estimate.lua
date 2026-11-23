@@ -1,11 +1,11 @@
 local _, QR = ...
 
--- Pure time-efficiency math. No game API calls here, so every function can be mirrored in
--- _tools/QuestRating_sim.py and checked offline. Units: seconds, yards, XP.
+-- Pure time-efficiency math. No game API calls here; _tools/build_questrating_data.py mirrors every
+-- function (objective_time, rate, dungeon_quest_plan, rate_dungeon, chain_rate). Units: seconds, yards, XP.
 local E = {}
 QR.Estimate = E
 
-local floor, ceil, sqrt, min, max = math.floor, math.ceil, math.sqrt, math.min, math.max
+local floor, sqrt, min, max = math.floor, math.sqrt, math.min, math.max
 
 -- On foot: between kills and in the grinding baseline.
 function E.WalkSpeed(cfg)
@@ -81,76 +81,6 @@ function E.Dist(a, b)
     return sqrt(dx * dx + dy * dy)
 end
 
--- Single-linkage clustering: points closer than `gap` yards (same instance) join one cluster.
--- points: { {x=, y=, inst=, key=}, ... }. Returns clusters sorted by size, largest first.
-function E.Cluster(points, gap)
-    local n = #points
-    local parent = {}
-    for i = 1, n do parent[i] = i end
-    local function find(i)
-        while parent[i] ~= i do
-            parent[i] = parent[parent[i]]
-            i = parent[i]
-        end
-        return i
-    end
-    local grid = {}
-    local function cellKey(inst, cx, cy) return inst .. ":" .. cx .. ":" .. cy end
-    for i = 1, n do
-        local p = points[i]
-        local cx, cy = floor(p.x / gap), floor(p.y / gap)
-        for ox = -1, 1 do
-            for oy = -1, 1 do
-                local list = grid[cellKey(p.inst, cx + ox, cy + oy)]
-                if list then
-                    for _, j in ipairs(list) do
-                        local q = points[j]
-                        local dx, dy = p.x - q.x, p.y - q.y
-                        if dx * dx + dy * dy <= gap * gap then
-                            local a, b = find(i), find(j)
-                            if a ~= b then parent[a] = b end
-                        end
-                    end
-                end
-            end
-        end
-        local k = cellKey(p.inst, cx, cy)
-        grid[k] = grid[k] or {}
-        table.insert(grid[k], i)
-    end
-    local byRoot, clusters = {}, {}
-    for i = 1, n do
-        local r = find(i)
-        local c = byRoot[r]
-        if not c then
-            c = { points = {}, n = 0, sx = 0, sy = 0, inst = points[i].inst,
-                  minX = math.huge, maxX = -math.huge, minY = math.huge, maxY = -math.huge }
-            byRoot[r] = c
-            clusters[#clusters + 1] = c
-        end
-        local p = points[i]
-        c.points[#c.points + 1] = p
-        c.n = c.n + 1
-        c.sx, c.sy = c.sx + p.x, c.sy + p.y
-        c.minX, c.maxX = min(c.minX, p.x), max(c.maxX, p.x)
-        c.minY, c.maxY = min(c.minY, p.y), max(c.maxY, p.y)
-    end
-    for _, c in ipairs(clusters) do
-        c.x, c.y = c.sx / c.n, c.sy / c.n
-    end
-    table.sort(clusters, function(a, b) return a.n > b.n end)
-    return clusters
-end
-
--- S (spawns), A (bounding-box area, yd^2), d (average walk between kills, yd)
-function E.Density(cluster, cfg)
-    local S = cluster and cluster.n or 0
-    if S < cfg.minSpawns then return S, 0, cfg.densityCap end
-    local A = max(1, (cluster.maxX - cluster.minX) * (cluster.maxY - cluster.minY))
-    local d = min(cfg.densityCap, 0.5 / sqrt(S / A))
-    return S, A, d
-end
-
 -- Group quests (user 2026-11-23): a party of 3-5, whichever is best. Kill XP: the server's group rate
 -- (2 players 1.0, 3 1.166, 4 1.3, 5 1.4) split over the members. Fight time: your solo fight time (elites
 -- included) / (party - 1): one member heals, the others deal damage as you do (user 2026-11-23: N to N-1
@@ -160,9 +90,9 @@ local GROUP_RATE = { 1.0, 1.0, 1.166, 1.3, 1.4 }
 E.GROUP_RATE = GROUP_RATE
 
 -- obj: { kind = "kill"|"item"|"object"|"event"|"vendor"|"none", N, p (0..1 or nil),
---        cluster, mobLevel, rank, elite, fromObject, rs (object respawn seconds, server data) }
+--        S, A, d (precomputed camp), presence, altPer, mobLevel, rank, fromObject, rs (camp respawn, server data) }
 -- party: nil (alone) or { n = members }
--- returns { K, S, A, d, tKill, wait, T, xp, p }
+-- returns { K, S, A, d, effS (targets up at a time), tKill, wait, altT, T, xp, p }
 function E.Objective(obj, playerLevel, cfg, party)
     local r = { K = 0, S = 0, A = 0, d = 0, tKill = 0, wait = 0, T = 0, xp = 0, p = obj.p }
     local kind = obj.kind
@@ -182,14 +112,12 @@ function E.Objective(obj, playerLevel, cfg, party)
     -- expected kills and respawn waves (no rounding up: an 80 % drop of a single mob waits a quarter of a
     -- respawn on average, not a whole one)
     r.K = obj.N * mul / p
-    if obj.synthetic then
+    if obj.synthetic or not obj.S then
         -- location unknown / spawns incomplete: grinding density, no respawn limit
         r.S, r.A, r.d = 0, 0, cfg.grindDistance
-    elseif obj.S then
+    else
         -- precomputed offline (Data/Generated.lua)
         r.S, r.A, r.d = obj.S, obj.A or 0, obj.d or cfg.densityCap
-    else
-        r.S, r.A, r.d = E.Density(obj.cluster, cfg)
     end
     local walk = r.d / E.WalkSpeed(cfg)
     if kind == "object" or obj.fromObject then
@@ -205,10 +133,11 @@ function E.Objective(obj, playerLevel, cfg, party)
         r.tKill = fight + select(2, E.GapTerms(cfg)) + walk
         r.xp = xp * r.K
     end
-    if not obj.synthetic then
+    if not (obj.synthetic or not obj.S) then
         -- mobs up when you start (spawn points x the chance a point shows the target x your share); later
         -- waves the same after each respawn (the floor only avoids a division by zero)
         local effS = max(1e-3, r.S * (obj.presence or 1) * cfg.shareFactor)
+        r.effS = effS
         local waves = r.K / effS
         -- shared spawn points (VMaNGOS): once the camp is used up, the other creatures its points show are
         -- killed too (altPer per target, as normal mobs of the target's level), while the points respawn: a
@@ -286,7 +215,7 @@ end
 --   main wing }. Objectives inside the run carry dRoute / dWing (target spawns on the route / in the wing),
 --   dMult (group need multiplier) and out = {S, A, d} (camp outside dungeons) from the database.
 -- The run is shared by every quest it can do, each by the part the route finishes (net gain, no extra way);
--- the rest of a quest is its own catch-up, the quicker of more killing in the wing / more runs / farming
+-- the rest of a quest is its own catch-up, the best XP per second of more killing in the wing / more runs / farming
 -- outside. Travel: a fixed QR_GEN.dungeonTravel for a run, there and back. Mirror of the build's
 -- dungeon_quest_plan / rate_dungeon.
 -- partyMax: highest level in your group; WoW Forever gives no XP for a kill when a group member is more
@@ -360,12 +289,23 @@ function E.DungeonPlan(model, playerLevel, cfg, noRoute, shared)
     end
     plan.detT = (useDetour and (run.detourYards or 0) or 0) / E.WalkSpeed(cfg) + dn * tkill
     plan.detX = dx * share
+    -- objectives off the run's route (outside the dungeon, or inside off every route): estimated as in the open world, alone, on the run's
+    -- trip (no route of their own, user 2026-11-23); the quest's own part, not a companion's
+    plan.outT, plan.outX = 0, 0
+    if not shared then
+        for _, obj in ipairs(model.objectives) do
+            if (obj.dWing or 0) == 0 then
+                local r = E.Objective(obj, playerLevel, cfg)
+                plan.outT, plan.outX = plan.outT + r.T, plan.outX + r.xp
+            end
+        end
+    end
     if #pend == 0 then return plan end
     local T, X, more, offT, offX = 0, 0, 0, 0, 0
     for _, e in ipairs(pend) do
         -- spawns not reached yet: the quest's own detour already counted its spawns (review 2026-11-23)
         local off = max(0, e.obj.dWing - e.obj.dRoute - (shared and 0 or (e.obj.dDetour or 0)))
-        local k = min(off, ceil(e.rest / e.p))
+        local k = min(off, e.rest / e.p) -- expected kills (no rounding up)
         T, X = T + k * tkill, X + k * e.kxp
         local left = e.rest - k * e.p
         if left > 1e-9 then more = max(more, left / (e.obj.dWing * e.p)) end
@@ -386,6 +326,7 @@ function E.DungeonPlan(model, playerLevel, cfg, noRoute, shared)
             local o = e.obj.out
             local r = E.Objective({ kind = e.obj.kind, fromObject = e.obj.fromObject, N = e.rest / (e.obj.dMult or 1),
                 p = e.obj.p, S = o[1], A = o[2], d = o[3], synthetic = o[1] < cfg.minSpawns,
+                rs = o[4], presence = o[5], altPer = o[6],
                 mobLevel = e.obj.mobLevel, rank = e.obj.rank }, playerLevel, cfg)
             T2, X2 = T2 + r.T, X2 + r.xp
         end
@@ -402,24 +343,32 @@ function E.Dungeon(model, playerLevel, cfg, companions)
                   dungeon = true, Trun = run.T, runs = 0, companions = {}, otherXP = 0, otherT = 0, runXP = 0 }
     res.Tfixed = cfg.fixedTime -- accept + turn-in talk, also for a logged quest (user 2026-11-23)
     local qxp = model.questXP or 0
-    if model.ready then -- only the turn-in is left
-        local _, tf = E.TripTimes(model, playerLevel, cfg)
+    if model.ready then -- only the way back and the turn-in are left: half the fixed travel (user 2026-11-23)
+        local tf = travelTime() / 2
         res.TrouteAlone, res.Troute, res.XP = tf, tf, qxp
         res.T = tf + res.Tfixed
         return res
     end
     local plan = E.DungeonPlan(model, playerLevel, cfg)
     res.plan, res.runXP, res.frac, res.levelCut = plan, plan.rx, plan.frac, plan.levelCut
+    -- a quest that needs the dungeon (user 2026-11-23: taking, an objective or turning in) with nothing left
+    -- inside: still a dungeon quest; the way back (half the fixed travel) and the objectives left outside
+    if model.anyIn and not model.insideLeft then
+        local tf = travelTime() / 2
+        res.TrouteAlone, res.Troute, res.Tfarm, res.mobXP = tf, tf, plan.outT, plan.outX
+        res.XP, res.T, res.mode = qxp + plan.outX, tf + plan.outT + res.Tfixed, "after"
+        return res
+    end
     -- the shared run, with this quest's own detour
-    local XP = plan.rx + plan.frac * qxp + plan.detX
-    local T = run.T + travelTime() + res.Tfixed + plan.detT
+    local XP = plan.rx + plan.frac * qxp + plan.detX + plan.outX
+    local T = run.T + travelTime() + res.Tfixed + plan.detT + plan.outT
     for _, c in ipairs(companions or {}) do
         XP, T = XP + c.xp, T + c.t
         res.otherXP, res.otherT = res.otherXP + c.xp, res.otherT + c.t
         res.companions[#res.companions + 1] = c.id
     end
     res.runs, res.Troute, res.TrouteAlone = 1, travelTime(), travelTime()
-    -- this quest's catch-up: the option with the higher XP per second (user 2026-11-23)
+    -- this quest's catch-up: the option with the best XP per second (user 2026-11-23)
     local rest = (1 - plan.frac) * qxp
     local bestMode, best, bestR
     for mode, o in pairs(plan.opts) do
@@ -430,30 +379,21 @@ function E.Dungeon(model, playerLevel, cfg, companions)
         XP, T = XP + rest + best.X, T + best.T
         res.mode, res.catchT, res.runs = bestMode, best.T, 1 + best.more
     end
-    res.Tfarm = run.T + (res.catchT or 0)
+    res.Tfarm = run.T + plan.detT + plan.outT + (res.catchT or 0)
     res.mobXP = XP - qxp - res.otherXP
     res.XP, res.T = XP, T
     -- a run is behind you (progress on its objectives): farming the rest outside may beat another run
     if model.runDone then
         local nr = E.DungeonPlan(model, playerLevel, cfg, true)
         local o = nr.opts.out
-        if o and (qxp + o.X) / (o.T + res.Tfixed) > XP / T then
+        -- with the objectives outside the run (nr.outT / outX), not the detour inside
+        if o and (qxp + o.X + nr.outX) / (o.T + nr.outT + res.Tfixed) > XP / T then
             res.mode, res.catchT, res.runs, res.companions, res.otherXP, res.otherT = "out", o.T, 0, {}, 0, 0
-            res.Troute, res.TrouteAlone, res.Tfarm, res.mobXP = 0, 0, o.T, o.X
-            res.XP, res.T = qxp + o.X, o.T + res.Tfixed
+            res.Troute, res.TrouteAlone, res.Tfarm, res.mobXP = 0, 0, o.T + nr.outT, o.X + nr.outX
+            res.XP, res.T = qxp + o.X + nr.outX, o.T + nr.outT + res.Tfixed
         end
     end
     return res
-end
-
--- Seconds of a model's way to the dungeon ("start" legs) and back ("finish" legs).
-function E.TripTimes(model, playerLevel, cfg)
-    local ts, tf = 0, 0
-    for _, lg in ipairs(model.routeLegs or {}) do
-        local t = lg.seconds or E.LegTime(lg.yards, cfg, playerLevel)
-        if lg.label == "start" then ts = ts + t else tf = tf + t end
-    end
-    return ts, tf
 end
 
 -- Gap per kill (loot, rest, walk) in the baseline, and its non-walking part for quest kills. Default: loot +

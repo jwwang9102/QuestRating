@@ -2,7 +2,7 @@ local _, QR = ...
 local L = QR.L
 
 -- /qr debug <questId>: prints every intermediate value of the estimate so the formula can be
--- checked in game against _tools/QuestRating_sim.py.
+-- checked in game against its mirror in _tools/build_questrating_data.py.
 
 local function f1(v) return v and string.format("%.1f", v) or "-" end
 local function f2(v) return v and string.format("%.2f", v) or "-" end
@@ -12,8 +12,9 @@ local function debugQuest(questId)
     local res, why = QR.Rate(questId)
     if not res then QR.Print("%s", tostring(why or L.MSG_NOT_READY)); return end
     local m = res.model
-    QR.Print("[%d] %s  Lv%s  玩家 Lv%d  日誌中=%s  任務經驗=%d",
-        questId, tostring(m.name), tostring(m.level), res.playerLevel, tostring(m.inLog), m.questXP or 0)
+    QR.Print("[%d] %s  Lv%s  玩家 Lv%d  日誌中=%s  已有進度=%s  可交=%s  任務經驗=%d",
+        questId, tostring(m.name), tostring(m.level), res.playerLevel, tostring(m.inLog), tostring(m.progress or false),
+        tostring(m.ready or false), m.questXP or 0)
     if #m.flags > 0 then out("標記: %s", table.concat(m.flags, "、")) end
     local fb, nfb = QR.Kill.FightBase(res.playerLevel)
     local gp, ngp = QR.Kill.Gap(res.playerLevel)
@@ -27,6 +28,12 @@ local function debugQuest(questId)
     if res.noData then out("%s：%s", L.NO_DATA, table.concat(res.reasons or {}, "、")); return end
     if m.map then out("主要地點：地圖 %s  %.1f, %.1f", tostring(m.map[1]), m.map[2] or 0, m.map[3] or 0) end
     local est = res.est
+    if not est then -- rated without an estimate (attunement, max level): its reasons only
+        out("%s", table.concat(res.reasons or {}, "、"))
+        return
+    end
+    if est.solve then out("副本任務解法：%s", est.solve == "in" and "進副本（副本外也可解，效率較低）"
+        or est.solve == "out" and "副本外（比打副本有效率）" or "副本外（剩下的目標都在副本外）") end
     if est.dungeon then
         local run = m.run
         local names = {}
@@ -48,10 +55,10 @@ local function debugQuest(questId)
     end
     for _, o in ipairs(est.objectives) do
         local obj = o.obj
-        out("目標%d %s N=%s(%s) p=%s%s K=%.1f S=%d A=%.0f d=%s t擊殺=%s 等待=%.0f T=%.0f 怪經驗=%.0f Lv=%s %s",
+        out("目標%d %s N=%s(%s) p=%s%s K=%.1f S=%d 出現率=%s 在場=%s A=%.0f d=%s t擊殺=%s 等待=%.0f T=%.0f 怪經驗=%.0f Lv=%s %s",
             obj.index, tostring(obj.kind), tostring(obj.N), tostring(obj.countSource),
-            f2(o.p), obj.pUnknown and "(不明)" or "", o.K, o.S, o.A, f1(o.d), f1(o.tKill), o.wait, o.T, o.xp,
-            f1(obj.mobLevel), tostring(obj.rank or "-"))
+            f2(o.p), obj.pUnknown and "(不明)" or "", o.K, o.S, f2(obj.presence or 1), f1(o.effS), o.A, f1(o.d),
+            f1(o.tKill), o.wait, o.T, o.xp, f1(obj.mobLevel), tostring(obj.rank or "-"))
         if obj.src then out("    來源 %s", obj.src) end
         if o.altT then out("    共用生成點：另清別種怪 %.0f 秒（每隻目標 %.2f 隻）", o.altT, obj.altPer or 0) end
         if obj.synthetic then out("    %s：擊殺以練功密度估算", obj.center and L.SPAWNS_INCOMPLETE or L.LOCATION_UNKNOWN) end
@@ -60,7 +67,7 @@ local function debugQuest(questId)
         out("群組%d：取目標%d，T=%.0f", gi, g.obj.index, g.T)
     end
     local legs = {}
-    for _, lg in ipairs(m.routeLegs or {}) do
+    for _, lg in ipairs((est.solve == "out" or est.solve == "outonly") and m.openLegs or m.routeLegs or {}) do
         local name = (L.LEG and L.LEG[lg.label]) or lg.label
         if lg.boat then
             legs[#legs + 1] = string.format("%s %s %.0f秒", name, L.LEG_BOAT, lg.seconds)
@@ -70,8 +77,14 @@ local function debugQuest(questId)
             legs[#legs + 1] = string.format("%s %.0f碼", name, lg.yards)
         end
     end
-    out("路程：%s，共 %.0f 碼", #legs > 0 and table.concat(legs, " → ") or "-", m.routeYards or 0)
-    out("同區任務=%d %s  分攤=%d  T路(單獨)=%.0f  T路=%.0f",
+    if est.dungeon then
+        out("路程：副本固定來回 %.0f 秒（%s）", est.Troute or 0, (m.ready or est.mode == "after") and "只剩回程" or "一輪")
+        if est.plan then out("路線外的目標（副本外或副本內路線外，共用這趟）%.0f 秒、經驗 %.0f", est.plan.outT or 0, est.plan.outX or 0) end
+    else
+        local open = est.solve == "out" or est.solve == "outonly"
+        out("路程：%s，共 %.0f 碼", #legs > 0 and table.concat(legs, " → ") or "-", (open and m.openYards or m.routeYards) or 0)
+    end
+    out("同區任務=%d（含同副本未解任務）%s  分攤=%d  T路(單獨)=%.0f  T路=%.0f",
         res.nearby, #res.nearbyList > 0 and ("(" .. table.concat(res.nearbyList, ",") .. ")") or "",
         est.share, est.TrouteAlone, est.Troute)
     out("T農怪=%.0f  等待=%.0f  T護送=%.0f  T固定=%.0f  總T=%.0f 秒 (%.1f 分)", est.Tfarm, est.wait, est.Tescort or 0,
@@ -82,7 +95,7 @@ local function debugQuest(questId)
     end
     if m.objectives then
         for _, obj in ipairs(m.objectives) do
-            if obj.rs then out("    目標%d 物件重生 %d 秒（伺服器資料）", obj.index, obj.rs) end
+            if obj.rs then out("    目標%d 重生 %d 秒（伺服器資料）", obj.index, obj.rs) end
         end
     end
     out("經驗：任務 %d%s + 殺怪 %.0f = %.0f", m.questXP or 0,

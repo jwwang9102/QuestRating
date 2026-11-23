@@ -95,7 +95,7 @@ local function build()
     y = keyBox(panel, L.OPT_RESPAWN, "respawn", y, 0)
     y = keyBox(panel, L.OPT_FIGHT, "fightBase", y, 1)
     y = keyBox(panel, L.OPT_SHARE, "shareFactor", y, 0.05, 1)
-    y = keyBox(panel, L.OPT_NEARBY_RADIUS, "nearbyRadius", y, 0)
+    y = keyBox(panel, L.OPT_NEARBY_RADIUS, "nearbyRadius", y, 0, 300) -- the database list is built at 300 yd
     y = keyBox(panel, L.OPT_NEARBY_CAP, "nearbyCap", y, 1)
     y = keyBox(panel, L.OPT_GEAR_SMALL, "gearSmall", y, 0)
     y = keyBox(panel, L.OPT_GEAR_BIG, "gearBig", y, 0)

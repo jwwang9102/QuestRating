@@ -1,8 +1,9 @@
 local ADDON, QR = ...
 local L = QR.L
 
--- Initial assumptions. None of these come from game data; they are starting values to be
--- calibrated in game (see _tools/QuestRating_PLAN.md section 3). All are user-adjustable.
+-- Settings. Starting values, not game data (fight time and gap are measured in game once there are
+-- enough samples, respawn comes from the server data where it has one). Camp choice and clustering are
+-- done offline by _tools/build_questrating_data.py, with its own copy of those settings.
 QR.DEFAULTS = {
     fightBase = 15,         -- seconds to kill a same-level normal mob (user, 2026-11-21)
     fightMinFactor = 0.6,   -- level factor clamp
@@ -19,20 +20,15 @@ QR.DEFAULTS = {
     flightMinYards = 2000,  -- longer travel legs may use a flight path instead
     flightSpeed = 30,       -- yards per second on a flight path
     flightOverhead = 90,    -- seconds: getting to / from flight masters
-    respawn = 150,          -- seconds; Questie has no respawn data
+    respawn = 150,          -- seconds; only where the server data has no respawn time
     shareFactor = 1.0,      -- fraction of spawns available to you (other players); 1 = not counted (user 2026-11-23)
-    maxWaves = 5,           -- nearest cluster is used unless it needs more respawn waves than this (user)
-    farExtra = 1000,        -- yards: a farther cluster may be at most this much farther than the nearest
     fixedTime = 30,         -- seconds for talking / accepting / turning in
     grindDistance = 30,     -- yards between mobs when grinding (baseline)
-    clusterGap = 150,       -- yards; spawns farther apart form separate clusters
     densityCap = 200,       -- yards; max walk between kills
-    minSpawns = 3,          -- fewer spawns in the main cluster -> walk = densityCap
+    minSpawns = 3,          -- fewer spawns in a camp: its walk is densityCap (outside catch-up camps)
     defaultDropRate = 0.3,  -- used when Questie has no drop rate
-    defaultCount = 8,       -- used when the objective count is unknown
-    nearbyRadius = 300,     -- yards; other quests this close share the route
+    nearbyRadius = 300,     -- yards; other quests this close share the route (at most 300: the database list)
     nearbyCap = 4,          -- route is divided by at most this many quests
-    maxPoints = 400,        -- spawn points considered per objective (performance)
     thresholds = { 0.7, 1.0, 1.5, 2.5 }, -- R boundaries, only when the database has no same-level rank points
     chainDepth = 6,         -- follow-up quests looked at (chain efficiency, dungeon prerequisite)
     chainDecay = 0.9,       -- XP of the i-th follow-up quest counts x chainDecay^i

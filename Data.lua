@@ -122,15 +122,40 @@ function D.DropRate(itemID, npcID)
     end
 end
 
--- Localised dungeon name for a zone ID: the client's area name, else the English name from the database.
+-- A dungeon quest done in the open world (user 2026-11-23): objectives of the run at their camp outside dungeons
+-- (obj.out = { S, A, d, respawn, presence, altPer }), the others as they are, route = model.openLegs. For
+-- E.Quest; nil without an open-world route.
+function D.OpenModel(model, cfg)
+    if not model.openLegs then return nil end
+    local m = { id = model.id, questXP = model.questXP, center = model.center, inLog = model.inLog, group = model.group,
+                ready = model.ready, progress = model.progress, routeLegs = model.openLegs,
+                routeYards = model.openYards, objectives = {}, groups = {} }
+    local byGroup = {}
+    for _, obj in ipairs(model.objectives) do
+        local o = obj
+        if (obj.dWing or 0) > 0 then
+            local out = obj.out
+            if not out then return nil end
+            -- the outside camp's own values (false = none there, not the inside camp's)
+            o = setmetatable({ S = out[1], A = out[2], d = out[3], rs = out[4] or false, presence = out[5] or false,
+                               altPer = out[6] or false, synthetic = out[1] < cfg.minSpawns }, { __index = obj })
+        end
+        m.objectives[#m.objectives + 1] = o
+        local g = byGroup[obj.group or obj.index]
+        if not g then g = {}; byGroup[obj.group or obj.index] = g; m.groups[#m.groups + 1] = g end
+        g[#g + 1] = o
+    end
+    return m
+end
+
 -- Same-level standard (QR_GEN.dist): the 20/40/60/80 % points of R over quests around this level, each
 -- rated at its own level (band edges), and the median R. nil when the database has none.
--- With your measured fight time / gap (cfg.fightMeasured / cfg.gapMeasured) the points are interpolated in
--- (log F, log G) from QR_GEN.distGrid, the same standard built offline for a grid of fight times and gaps
--- (review 2026-11-23: R and the band edges then use the same settings).
+-- The points are interpolated in (log F, log G) from QR_GEN.distGrid, the same standard built offline for a
+-- grid of fight times and gaps, at your fight time and gap (measured or set): R and the band edges always use
+-- the same settings (the defaults are grid nodes).
 local function gridPoint(level, cfg)
     local g = QR_GEN and QR_GEN.distGrid
-    if not g or not (cfg and (cfg.fightMeasured or cfg.gapMeasured)) then return nil end
+    if not g or not cfg then return nil end
     local F = cfg.fightBase
     local G = cfg.gap or (cfg.lootTime + cfg.grindDistance / cfg.walkSpeed)
     local function bracket(list, v)
@@ -259,7 +284,7 @@ function D.BuildModel(questId)
             index = i, kind = KIND[o.k] or "event", fromObject = o.k == 4, N = o.n, countSource = o.cs,
             p = o.p, pUnknown = o.pu == 1, S = o.S, A = o.A, d = o.d, mobLevel = o.lv, rank = RANK[o.r] or "normal",
             synthetic = o.sy == 1, src = o.src, center = point(o.c), group = o.g, item = o.i, rs = o.rs,
-            dRoute = o.dr or 0, dDetour = o.dd or 0, dWing = o.dw, dMult = o.dm, out = o.ox, levelUnknown = o.lu == 1, multiDrop = o.md == 1, altPer = o.ap, presence = o.pr,
+            dRoute = o.dr or 0, dDetour = o.dd or 0, dWing = o.dw, dMult = o.dm, out = o.ox, levelUnknown = o.lu == 1, multiDrop = o.md == 1, altPer = o.ap, presence = o.pr, offRoute = o.di == 1,
         }
         local lo = liveFor(i, o.n)
         obj.liveMatched = lo ~= nil
@@ -294,25 +319,29 @@ function D.BuildModel(questId)
     -- to the first target is behind you) or is ready (then only the way to the turn-in is left).
     -- "B" + segment = ship / zeppelin of that segment, value in seconds. "E" + segment = the escort, in
     -- seconds at the escorted NPC's pace: still to do while the quest is open, gone once it is ready.
-    model.routeLegs, model.routeYards = {}, 0
-    for _, lg in ipairs(rec.legs or {}) do
-        local kind = lg[1]
-        local first = kind:sub(1, 1)
-        local boat, escort = first == "B", first == "E"
-        local label = LEG[(boat or escort) and kind:sub(2) or kind] or kind
-        if escort then
-            if not model.ready then
-                model.routeLegs[#model.routeLegs + 1] = { label = label, seconds = lg[2], escort = true }
-            end
-        elseif not ((model.ready or model.progress) and label == "start") and not (model.ready and label == "target") then
-            if boat then
-                model.routeLegs[#model.routeLegs + 1] = { label = label, seconds = lg[2], boat = true }
-            else
-                model.routeLegs[#model.routeLegs + 1] = { label = label, yards = lg[2] }
-                model.routeYards = model.routeYards + lg[2]
+    local function legsOf(list)
+        local legs, yards = {}, 0
+        for _, lg in ipairs(list or {}) do
+            local kind = lg[1]
+            local first = kind:sub(1, 1)
+            local boat, escort = first == "B", first == "E"
+            local label = LEG[(boat or escort) and kind:sub(2) or kind] or kind
+            if escort then
+                if not model.ready then legs[#legs + 1] = { label = label, seconds = lg[2], escort = true } end
+            elseif not ((model.ready or model.progress) and label == "start") and not (model.ready and label == "target") then
+                if boat then
+                    legs[#legs + 1] = { label = label, seconds = lg[2], boat = true }
+                else
+                    legs[#legs + 1] = { label = label, yards = lg[2] }
+                    yards = yards + lg[2]
+                end
             end
         end
+        return legs, yards
     end
+    model.routeLegs, model.routeYards = legsOf(rec.legs)
+    -- a dungeon quest done in the open world instead (rec.ol: its own route over camps outside dungeons)
+    if rec.ol then model.openLegs, model.openYards = legsOf(rec.ol) end
 
     -- dungeon quest: the normal run of its wing(s) (Generated.lua QR_GEN.wing, user 2026-11-23)
     if rec.wd and QR_GEN.wing then
@@ -327,6 +356,24 @@ function D.BuildModel(questId)
             run.inner = run.inner or w.s
         end
         model.run = run
+        -- the run is needed (anyIn) and still to do (insideLeft): an objective inside the run or inside the
+        -- dungeon off the route (offRoute), or a quest turned in (rec.af) / taken (rec.at) inside. Mirror of the
+        -- build's anyin.
+        for _, obj in ipairs(model.objectives) do
+            if (obj.dWing or 0) > 0 or obj.offRoute then
+                model.anyIn = true
+                if (obj.N or 0) > 0 then model.insideLeft = true end
+                if obj.offRoute then model.offRoute = true end -- not a run companion (mirror of the build)
+            end
+        end
+        if rec.af == 1 then -- turned in inside: still ahead until it is turned in
+            model.anyIn = true
+            if not model.ready then model.insideLeft = true end
+        end
+        if rec.at == 1 then -- taken inside: ahead only while it is not taken
+            model.anyIn = true
+            if not model.inLog then model.insideLeft = true end
+        end
         -- progress on an objective inside the run: a run is behind you (rated by what is left)
         for _, obj in ipairs(model.objectives) do
             if run and (obj.dWing or 0) > 0 and obj.needed and (obj.N or 0) > 0 and obj.N < obj.needed then
@@ -364,10 +411,13 @@ function D.BuildModel(questId)
             local obj = model.objectives[i]
             if o.lu == 1 and obj and (obj.N or 0) > 0 then miss(L.MISSING_MOB_LEVEL) end -- level-scaling mob
         end
+        if model.run and not model.anyIn and not model.openLegs then
+            miss(L.MISSING_ROUTE) -- every objective outside the run, but no open-world route
+        end
         if model.dungeon and not model.run then
-            -- raid, quest whose wing is unknown, or a wing without a run time
+            -- raid (or an objective only in a raid), wing unknown, no run time, or objectives in several dungeons
             miss(rec.dm == "raid" and L.MISSING_DUNGEON_RAID or rec.dm == "wing" and L.MISSING_DUNGEON_WING
-                or L.MISSING_DUNGEON_RUNTIME)
+                or rec.dm == "multi" and L.MISSING_DUNGEON_MULTI or L.MISSING_DUNGEON_RUNTIME)
         end
         if #(rec.o or {}) == 0 then
             local walk = 0
