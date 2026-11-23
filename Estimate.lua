@@ -206,7 +206,9 @@ function E.Objective(obj, playerLevel, cfg, party)
         r.xp = xp * r.K
     end
     if not obj.synthetic then
-        local effS = max(1, r.S * cfg.shareFactor)
+        -- mobs up when you start (spawn points x the chance a point shows the target x your share); later
+        -- waves the same after each respawn (the floor only avoids a division by zero)
+        local effS = max(1e-3, r.S * (obj.presence or 1) * cfg.shareFactor)
         local waves = r.K / effS
         -- shared spawn points (VMaNGOS): once the camp is used up, the other creatures its points show are
         -- killed too (altPer per target, as normal mobs of the target's level), while the points respawn: a

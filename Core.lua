@@ -20,7 +20,7 @@ QR.DEFAULTS = {
     flightSpeed = 30,       -- yards per second on a flight path
     flightOverhead = 90,    -- seconds: getting to / from flight masters
     respawn = 150,          -- seconds; Questie has no respawn data
-    shareFactor = 0.7,      -- fraction of spawns available to you (other players)
+    shareFactor = 1.0,      -- fraction of spawns available to you (other players); 1 = not counted (user 2026-11-23)
     maxWaves = 5,           -- nearest cluster is used unless it needs more respawn waves than this (user)
     farExtra = 1000,        -- yards: a farther cluster may be at most this much farther than the nearest
     fixedTime = 30,         -- seconds for talking / accepting / turning in
@@ -77,6 +77,11 @@ local function initDB()
     if QuestRatingDB.version < 3 then
         p.maxWaves = nil
         QuestRatingDB.version = 3
+    end
+    -- settings version 4: shareFactor 0.7 -> 1 (other players not counted for now)
+    if QuestRatingDB.version < 4 then
+        p.shareFactor = nil
+        QuestRatingDB.version = 4
     end
     QR.db = QuestRatingDB
     QR.FillDefaults()
