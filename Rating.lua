@@ -4,8 +4,8 @@ local E = QR.Estimate
 local D = QR.Data
 
 -- Turns a model into a rating: R, continuous position, level 0..4 and direct reasons.
--- Time efficiency, quest chains (follow-up quests can only raise R), dungeon quests and dungeon
--- prerequisites (very high), reward gear from OneForAll (level bonus).
+-- Time efficiency, quest chains (follow-up quests can only raise R), dungeon quests as the normal run of
+-- their wing (user 2026-11-23: no longer "very high" by default), reward gear from OneForAll (level bonus).
 
 local modelCache = {} -- [questId] = model | { fail = reason }
 local rateCache = {}  -- [questId] = { res, why } for the UI (tracker titles are redrawn often)
@@ -103,15 +103,64 @@ local function dungeonAhead(questId, cfg)
     end
 end
 
+-- Other quests the same dungeon run can do (user 2026-11-23), as E.Dungeon candidates { {id, xp, t}, ... }:
+-- same main wing, open to you, not done, taken or takeable now (min level, prerequisites done), not
+-- grey, not exclusive with one done or taken. Each adds its quest XP x the part the route finishes and its
+-- turn-in time (its own catch-up is not part of the shared run). Mirror of the build's run_companions
+-- (offline, prerequisites outside the wing count as done).
+local function inLogQuest(id)
+    return C_QuestLog and C_QuestLog.GetLogIndexForQuestID and (C_QuestLog.GetLogIndexForQuestID(id) or 0) > 0
+end
+local function runCompanions(model, pl, cfg)
+    local out = {}
+    local wing = model.run and model.run.wings[1]
+    local list = wing and QR_GEN.wingQuests and QR_GEN.wingQuests[wing]
+    if not list or model.ready then return out end
+    local taken = { [model.id] = true }
+    local function excluded(rec)
+        for _, x in ipairs(rec.ex or {}) do
+            if taken[x] or completed(x) then return true end
+        end
+        return false
+    end
+    for _, id in ipairs(list) do
+        local rec = D.Record(id)
+        if not taken[id] and rec and D.Available(rec) and not completed(id) and not excluded(rec) then
+            local ok = inLogQuest(id)
+            if not ok and (rec.ml or 0) <= pl and (rec.lv or 0) > E.GrayLevel(pl) then
+                ok = true
+                for _, pre in ipairs(rec.pa or {}) do if not completed(pre) then ok = false end end
+                if ok and rec.p1 and #rec.p1 > 0 then
+                    local any = false
+                    for _, pre in ipairs(rec.p1) do if completed(pre) then any = true end end
+                    ok = any
+                end
+            end
+            local other = ok and getModel(id)
+            if other and other.run and #other.missing == 0 then
+                taken[id] = true
+                -- its share: what the base route finishes (its own detour is its own business)
+                local op = (not other.ready) and E.DungeonPlan(other, pl, cfg, false, true) or nil
+                local frac = op and op.frac or 1
+                out[#out + 1] = { id = id, xp = frac * (other.questXP or 0), t = cfg.fixedTime * (other.inLog and 0.5 or 1) }
+            end
+        end
+    end
+    return out
+end
+
 -- One quest on its own at player level `lv` (no route sharing, no chain, no bonus); nil when it
 -- cannot be estimated. The model's quest XP is scaled for the real player level, so it is
 -- re-scaled for `lv` here.
 local function soloEstimate(questId, lv, cfg)
     local m = getModel(questId)
-    if not m or m.noData or m.dungeon or #m.missing > 0 then return nil end
-    local est = E.Quest(m, lv, cfg, 0)
+    if not m or m.noData or (m.dungeon and not m.run) or #m.missing > 0 then return nil end
+    local est = m.run and E.Dungeon(m, lv, cfg, runCompanions(m, lv, cfg)) or E.Quest(m, lv, cfg, 0)
     if est.T <= 0 then return nil end
-    est.XP = est.XP - (m.questXP or 0) + D.QuestXP(D.Record(questId), lv)
+    -- at your own level a logged quest keeps the client's live XP (review 2026-11-23)
+    if not (lv == (UnitLevel("player") or 1) and m.xpFromClient) then
+        est.XP = est.XP - (m.questXP or 0) + D.QuestXP(D.Record(questId), lv)
+    end
     return est
 end
 
@@ -120,7 +169,7 @@ end
 -- divided by the grinding baseline of that level, so a level-50 quest in a level-30 chain counts
 -- as "hours of grinding saved at 50", not as huge XP at 30. At each step the follow-up with the
 -- best normalised XP per second (an exclusive choice takes the better branch), x chainDecay^i,
--- plus the walk from the previous turn-in. Stops at a dungeon quest or one that cannot be estimated.
+-- plus the walk from the previous turn-in. Stops at a quest that cannot be estimated.
 -- Returns grinding hours saved (H), total seconds, steps, { ids }; R of the chain = H * 3600 / T.
 local function chainEstimate(questId, est0, pl, cfg, B0)
     local seen = { [questId] = true }
@@ -163,6 +212,23 @@ local function buildReasons(res, model, est, cfg)
         end
     end
     if model.ready then add(L.REASON_READY) end
+    -- dungeon run: which run, how long, more runs or farming outside, what the group needs
+    if est.dungeon and not model.ready then
+        local run = model.run
+        add(string.format(L.REASON_RUN, D.WingName(run.wings[1]), math.max(1, math.floor(run.T / 60 + 0.5))))
+        if model.runDone then add(L.REASON_RUN_PROGRESS) end
+        if est.levelCut then add(L.REASON_LEVEL_GAP) end
+        local mins = math.max(1, math.floor((est.catchT or 0) / 60 + 0.5))
+        if est.mode == "out" then add(string.format(L.REASON_CATCH_OUT, mins))
+        elseif est.mode == "run" then add(string.format(L.REASON_CATCH_RUN, est.runs - (model.runDone and 0 or 1)))
+        elseif est.mode == "wing" then add(string.format(L.REASON_CATCH_WING, mins)) end
+        if run.need then add(string.format(L.REASON_GROUP_NEED, run.need)) end
+        if #(est.companions or {}) > 0 then add(string.format(L.REASON_RUN_SHARED, #est.companions)) end
+    end
+    if res.prereqZone then
+        add(res.prereqZone > 0 and string.format(L.REASON_DUNGEON_PREREQ, D.DungeonName(res.prereqZone))
+            or L.REASON_DUNGEON_PREREQ_NONAME)
+    end
     if model.noXP and not res.atMax then add(L.REASON_NO_XP) end
     -- bonus sources are always named
     if res.gearText then add(res.gearText) end
@@ -224,7 +290,8 @@ local function buildReasons(res, model, est, cfg)
     end
     -- data reliability
     for _, f in ipairs(model.flags) do
-        if f == L.DROP_UNKNOWN or f == L.COUNT_UNKNOWN or f == L.ROUTE_UNKNOWN or f == L.LOCATION_UNKNOWN or f == L.SPAWNS_INCOMPLETE then
+        if f == L.DROP_UNKNOWN or f == L.COUNT_UNKNOWN or f == L.ROUTE_UNKNOWN or f == L.LOCATION_UNKNOWN or f == L.SPAWNS_INCOMPLETE
+            or f == L.DROP_EMULATED then
             add(f)
         end
     end
@@ -234,46 +301,38 @@ end
 -- Returns a result table (all intermediate values kept for /qr debug), or nil, reason.
 function QR.Rate(questId)
     if not QR.ready then return nil, L.MSG_NOT_READY end
-    local cfg = QR.Cfg()
+    local cfg = QR.CfgFor(UnitLevel("player") or 1) -- your measured fight time once there are enough samples
     local model, why = getModel(questId)
     if not model then return nil, why end
     local res = { questId = questId, model = model, playerLevel = UnitLevel("player") or 1 }
-    -- dungeon quest, or a dungeon quest further down the chain: very high regardless of efficiency
-    -- (plan section 5)
-    local dungeonText
-    if model.dungeon then
-        dungeonText = L.REASON_DUNGEON
-    else
+    -- a dungeon quest further down the chain: named in the reasons; the chain estimate decides its worth
+    if not model.dungeon then
         local zone, depth = dungeonAhead(questId, cfg)
-        if zone then
-            res.prereqZone, res.prereqDepth = zone, depth
-            -- zone 0: a dungeon quest known only by its quest type, with no zone on record
-            dungeonText = zone > 0 and string.format(L.REASON_DUNGEON_PREREQ, D.DungeonName(zone))
-                or L.REASON_DUNGEON_PREREQ_NONAME
-        end
+        if zone then res.prereqZone, res.prereqDepth = zone, depth end
     end
-    if dungeonText then
-        res.dungeon, res.level, res.position, res.bonus = true, 4, 4, 0
-        res.reasons = { dungeonText }
-        if model.noData then return res end
-    elseif model.noData or #model.missing > 0 then
+    if model.noData or #model.missing > 0 then
         -- not estimable: say what is missing instead of rating on a guess
         res.noData = true
         res.reasons = #model.missing > 0 and model.missing or { L.NO_DATA }
         return res
     end
     local pl = res.playerLevel
-    local nearby, nearbyList = countNearby(model, cfg)
-    local est = E.Quest(model, pl, cfg, nearby)
+    local nearby, nearbyList, est = 0, {}, nil
+    if model.run then
+        -- dungeon quest: the run with the other quests it can do
+        est = E.Dungeon(model, pl, cfg, runCompanions(model, pl, cfg))
+    else
+        nearby, nearbyList = countNearby(model, cfg)
+        est = E.Quest(model, pl, cfg, nearby)
+    end
     res.est, res.nearby, res.nearbyList = est, nearby, nearbyList
     res.B = E.Baseline(pl, cfg)
     res.E = est.T > 0 and (est.XP / est.T * 3600) or 0
     res.R = res.B > 0 and res.E / res.B or 0
     res.atMax = pl >= maxLevel()
-    if res.dungeon then return res end
     -- standard: rank among same-level quests (user 2026-11-23), each 20 % one band
     local scale = cfg
-    local cuts, median = D.LevelDist(pl)
+    local cuts, median = D.LevelDist(pl, cfg)
     if cuts then
         scale = { thresholds = cuts }
         res.median = median
@@ -337,12 +396,12 @@ end
 -- Models hold live log progress and level-scaled XP: drop them when either changes.
 -- Gear and talents only change the reward bonus.
 local GEAR_EVENTS = { PLAYER_EQUIPMENT_CHANGED = true, CHARACTER_POINTS_CHANGED = true, TRAIT_CONFIG_UPDATED = true,
-    ACTIVE_TALENT_GROUP_CHANGED = true }
+    ACTIVE_TALENT_GROUP_CHANGED = true, GROUP_ROSTER_UPDATE = true }
 QR.RegisterReady(function()
     local ev = CreateFrame("Frame")
     for _, e in ipairs({ "PLAYER_LEVEL_UP", "QUEST_LOG_UPDATE", "QUEST_ACCEPTED", "QUEST_REMOVED", "QUEST_TURNED_IN",
         "PLAYER_EQUIPMENT_CHANGED", "CHARACTER_POINTS_CHANGED", "TRAIT_CONFIG_UPDATED", "ACTIVE_TALENT_GROUP_CHANGED",
-        "GET_ITEM_INFO_RECEIVED" }) do
+        "GET_ITEM_INFO_RECEIVED", "GROUP_ROSTER_UPDATE" }) do
         pcall(ev.RegisterEvent, ev, e) -- not every event exists on every client
     end
     local function refresh() if QR.UI and QR.UI.Refresh then QR.UI.Refresh() end end

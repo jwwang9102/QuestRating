@@ -10,8 +10,12 @@ What goes into the estimate:
 - kill and drop quests: drop rate, required count, spawn density, respawn waits, travel;
 - picking up objects: the object's own respawn time and the chance it gives the item;
 - escorts: the escorted NPC's path and walking speed;
-- follow-up quests in the chain, dungeon quests further down the chain, and reward upgrades
-  (with OneForAll).
+- your own fight time: the median time per kill of your solo fights at your level and the two below
+  (recorded in game; a default is used until there are enough fights);
+- dungeon quests: a normal WoW Forever run of the dungeon (run time from Forever full-run videos, the
+  mobs on the route, Forever's dungeon kill XP), shared with the other quests the same run can do;
+  what one run does not finish is caught up by more runs or farming outside, whichever is quicker;
+- follow-up quests in the chain and reward upgrades (with OneForAll).
 
 Where it shows: Questie's tracker and map icon tooltips, the world map quest log, and the quest offer
 window. Questie and OneForAll are optional.

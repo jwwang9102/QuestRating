@@ -181,7 +181,7 @@ function E.Objective(obj, playerLevel, cfg)
         r.tKill = cfg.objectLootTime + walk
         r.xp = 0
     else
-        r.tKill = E.FightTime(obj.mobLevel, playerLevel, obj.rank, cfg) + cfg.lootTime + walk
+        r.tKill = E.FightTime(obj.mobLevel, playerLevel, obj.rank, cfg) + select(2, E.GapTerms(cfg)) + walk
         r.xp = E.KillXP(obj.mobLevel, playerLevel, obj.rank == "elite") * r.K
     end
     if not obj.synthetic then
@@ -233,9 +233,193 @@ function E.Quest(model, playerLevel, cfg, nearby)
     return res
 end
 
+-- Dungeon quest: the normal run of its wing(s) with this quest (user 2026-11-23).
+-- model.run = { T (run seconds), n (kills of a run), kills = { {level, elite, count, ...}, ... } and shares
+--   (kill XP each member gets: group share x Forever's dungeon kill-XP factor) per wing, inner = share of the
+--   main wing }. Objectives inside the run carry dRoute / dWing (target spawns on the route / in the wing),
+--   dMult (group need multiplier) and out = {S, A, d} (camp outside dungeons) from the database.
+-- The run is shared by every quest it can do, each by the part the route finishes (net gain, no extra way);
+-- the rest of a quest is its own catch-up, the quicker of more killing in the wing / more runs / farming
+-- outside. Travel: a fixed QR_GEN.dungeonTravel for a run, there and back. Mirror of the build's
+-- dungeon_quest_plan / rate_dungeon.
+-- partyMax: highest level in your group; WoW Forever gives no XP for a kill when a group member is more
+-- than 12 levels above it (reported rule of the 13 / 14 Nov hotfixes, exact text not retrieved). Returns
+-- the XP and whether the rule removed any kill.
+function E.RunXP(run, playerLevel, partyMax)
+    local xp, cut = 0, false
+    local floorLevel = (partyMax or 0) - 12
+    for w, k in ipairs(run.kills) do
+        local wxp = 0
+        for i = 1, #k - 2, 3 do
+            if k[i] < floorLevel then
+                cut = true
+            else
+                wxp = wxp + k[i + 2] * E.KillXP(k[i], playerLevel, k[i + 1] == 1)
+            end
+        end
+        xp = xp + wxp * (run.shares[w] or 0)
+    end
+    return xp, cut
+end
+
+local function travelTime()
+    return (QR_GEN and QR_GEN.dungeonTravel) or 600
+end
+
+local function chance(obj, cfg)
+    if obj.kind ~= "item" then return 1 end
+    if obj.p and obj.p > 0 then return obj.p end
+    return obj.fromObject and 1 or cfg.defaultDropRate
+end
+
+-- What one run does for a quest: frac (part the route finishes, mean over its objectives inside) and the
+-- catch-up options for the rest: wing (more kills in the same run), run (then more runs), out (farming
+-- outside alone, each member his own share), each { T, X, more }. noRoute: as if the route gave nothing
+-- (a quest whose run is behind it, farmed outside). shared: as a companion in another quest's run, only what the
+-- base route finishes, without this quest's own detour (net gain, review 2026-11-23).
+function E.DungeonPlan(model, playerLevel, cfg, noRoute, shared)
+    local run = model.run
+    local tkill = run.T / max(1, run.n)
+    local share = run.inner or 0
+    local plan = { opts = {} }
+    plan.rx, plan.levelCut = E.RunXP(run, playerLevel, cfg.partyMax)
+    local fsum, fn, pend = 0, 0, {}
+    for _, obj in ipairs(model.objectives) do
+        if (obj.dWing or 0) > 0 then
+            local need = (obj.N or 0) * (obj.dMult or 1)
+            if need > 0 then
+                local p = chance(obj, cfg)
+                local kills = obj.kind == "kill" or (obj.kind == "item" and not obj.fromObject)
+                local kxp = kills and obj.mobLevel >= (cfg.partyMax or 0) - 12
+                    and E.KillXP(obj.mobLevel, playerLevel, obj.rank == "elite") * share or 0
+                local got = noRoute and 0 or (obj.dRoute + (shared and 0 or (obj.dDetour or 0))) * p
+                fsum, fn = fsum + min(1, got / need), fn + 1
+                if got < need - 1e-9 then pend[#pend + 1] = { obj = obj, rest = need - got, p = p, kxp = kxp } end
+            end
+        end
+    end
+    plan.frac = fn > 0 and fsum / fn or 1
+    -- the quest's own detour from the run's route to its objectives: walk + its extra kills at the run's pace;
+    -- dropped once every objective it serves is done (live progress)
+    local detourLeft = false
+    for _, obj in ipairs(model.objectives) do
+        if (obj.dDetour or 0) > 0 and (obj.N or 0) > 0 then detourLeft = true end
+    end
+    local useDetour = detourLeft and not shared
+    local dk, dn, dx = useDetour and run.detourKills or {}, 0, 0
+    for i = 1, #dk - 2, 3 do
+        dn = dn + dk[i + 2]
+        if dk[i] >= (cfg.partyMax or 0) - 12 then dx = dx + dk[i + 2] * E.KillXP(dk[i], playerLevel, dk[i + 1] == 1) end
+    end
+    plan.detT = (useDetour and (run.detourYards or 0) or 0) / E.WalkSpeed(cfg) + dn * tkill
+    plan.detX = dx * share
+    if #pend == 0 then return plan end
+    local T, X, more, offT, offX = 0, 0, 0, 0, 0
+    for _, e in ipairs(pend) do
+        -- spawns not reached yet: the quest's own detour already counted its spawns (review 2026-11-23)
+        local off = max(0, e.obj.dWing - e.obj.dRoute - (shared and 0 or (e.obj.dDetour or 0)))
+        local k = min(off, ceil(e.rest / e.p))
+        T, X = T + k * tkill, X + k * e.kxp
+        local left = e.rest - k * e.p
+        if left > 1e-9 then more = max(more, left / (e.obj.dWing * e.p)) end
+        -- a later run kills every off-route spawn again (they respawned)
+        local offAll = e.obj.dWing - e.obj.dRoute
+        offT, offX = offT + offAll * tkill, offX + offAll * e.kxp
+    end
+    if more > 0 then
+        T = T + more * (run.T + travelTime() + offT)
+        X = X + more * (plan.rx + offX)
+    end
+    plan.opts[more > 0 and "run" or "wing"] = { T = T, X = X, more = more }
+    local outside = true
+    for _, e in ipairs(pend) do if not e.obj.out then outside = false end end
+    if outside then
+        local T2, X2 = 0, 0
+        for _, e in ipairs(pend) do
+            local o = e.obj.out
+            local r = E.Objective({ kind = e.obj.kind, fromObject = e.obj.fromObject, N = e.rest / (e.obj.dMult or 1),
+                p = e.obj.p, S = o[1], A = o[2], d = o[3], synthetic = o[1] < cfg.minSpawns,
+                mobLevel = e.obj.mobLevel, rank = e.obj.rank }, playerLevel, cfg)
+            T2, X2 = T2 + r.T, X2 + r.xp
+        end
+        plan.opts.out = { T = T2, X = X2, more = 0 }
+    end
+    return plan
+end
+
+-- companions = { {id, xp, t}, ... }: the other quests the run can do, each its quest XP x the part the route
+-- finishes, and its turn-in time.
+function E.Dungeon(model, playerLevel, cfg, companions)
+    local run = model.run
+    local res = { Tfarm = 0, mobXP = 0, wait = 0, objectives = {}, groups = {}, share = 1, Tescort = 0,
+                  dungeon = true, Trun = run.T, runs = 0, companions = {}, otherXP = 0, otherT = 0, runXP = 0 }
+    res.Tfixed = cfg.fixedTime * (model.inLog and 0.5 or 1)
+    local qxp = model.questXP or 0
+    if model.ready then -- only the turn-in is left
+        local _, tf = E.TripTimes(model, playerLevel, cfg)
+        res.TrouteAlone, res.Troute, res.XP = tf, tf, qxp
+        res.T = tf + res.Tfixed
+        return res
+    end
+    local plan = E.DungeonPlan(model, playerLevel, cfg)
+    res.plan, res.runXP, res.frac, res.levelCut = plan, plan.rx, plan.frac, plan.levelCut
+    -- the shared run, with this quest's own detour
+    local XP = plan.rx + plan.frac * qxp + plan.detX
+    local T = run.T + travelTime() + res.Tfixed + plan.detT
+    for _, c in ipairs(companions or {}) do
+        XP, T = XP + c.xp, T + c.t
+        res.otherXP, res.otherT = res.otherXP + c.xp, res.otherT + c.t
+        res.companions[#res.companions + 1] = c.id
+    end
+    res.runs, res.Troute, res.TrouteAlone = 1, travelTime(), travelTime()
+    -- this quest's catch-up: the option with the higher XP per second (user 2026-11-23)
+    local rest = (1 - plan.frac) * qxp
+    local bestMode, best, bestR
+    for mode, o in pairs(plan.opts) do
+        local r = (XP + rest + o.X) / (T + o.T)
+        if not bestR or r > bestR then bestMode, best, bestR = mode, o, r end
+    end
+    if best then
+        XP, T = XP + rest + best.X, T + best.T
+        res.mode, res.catchT, res.runs = bestMode, best.T, 1 + best.more
+    end
+    res.Tfarm = run.T + (res.catchT or 0)
+    res.mobXP = XP - qxp - res.otherXP
+    res.XP, res.T = XP, T
+    -- a run is behind you (progress on its objectives): farming the rest outside may beat another run
+    if model.runDone then
+        local nr = E.DungeonPlan(model, playerLevel, cfg, true)
+        local o = nr.opts.out
+        if o and (qxp + o.X) / (o.T + res.Tfixed) > XP / T then
+            res.mode, res.catchT, res.runs, res.companions, res.otherXP, res.otherT = "out", o.T, 0, {}, 0, 0
+            res.Troute, res.TrouteAlone, res.Tfarm, res.mobXP = 0, 0, o.T, o.X
+            res.XP, res.T = qxp + o.X, o.T + res.Tfixed
+        end
+    end
+    return res
+end
+
+-- Seconds of a model's way to the dungeon ("start" legs) and back ("finish" legs).
+function E.TripTimes(model, playerLevel, cfg)
+    local ts, tf = 0, 0
+    for _, lg in ipairs(model.routeLegs or {}) do
+        local t = lg.seconds or E.LegTime(lg.yards, cfg, playerLevel)
+        if lg.label == "start" then ts = ts + t else tf = tf + t end
+    end
+    return ts, tf
+end
+
+-- Gap per kill (loot, rest, walk) in the baseline, and its non-walking part for quest kills. Default: loot +
+-- the grinding walk. With cfg.gap (your measured median, KillTimer) the measured gap; its walking part is
+-- taken as the grinding walk (an assumption, review 2026-11-23). Mirror of the build's gap_terms.
+function E.GapTerms(cfg)
+    local walk = cfg.grindDistance / E.WalkSpeed(cfg)
+    if not cfg.gap then return cfg.lootTime + walk, cfg.lootTime end
+    return cfg.gap, max(0, cfg.gap - walk)
+end
+
 function E.Baseline(playerLevel, cfg)
-    local tk = E.FightTime(playerLevel, playerLevel, "normal", cfg) + cfg.lootTime
-        + cfg.grindDistance / E.WalkSpeed(cfg)
+    local tk = E.FightTime(playerLevel, playerLevel, "normal", cfg) + E.GapTerms(cfg)
     return E.KillXP(playerLevel, playerLevel, false) / tk * 3600
 end
 

@@ -87,7 +87,7 @@ local KIND = { [1] = "kill", [2] = "item", [3] = "object", [4] = "item", [5] = "
 local RANK = { [1] = "elite", [2] = "rare" }
 local FLAG = {
     DU = "DROP_UNKNOWN", CU = "COUNT_UNKNOWN", RU = "ROUTE_UNKNOWN", LU = "LOCATION_UNKNOWN",
-    SI = "SPAWNS_INCOMPLETE", FM = "FEW_MOBS", EL = "ELITE", RO = "RARE_ONLY",
+    SI = "SPAWNS_INCOMPLETE", FM = "FEW_MOBS", EL = "ELITE", RO = "RARE_ONLY", DE = "DROP_EMULATED",
 }
 local LEG = { s = "start", t = "target", f = "finish", d = "deliver" }
 
@@ -125,13 +125,55 @@ end
 -- Localised dungeon name for a zone ID: the client's area name, else the English name from the database.
 -- Same-level standard (QR_GEN.dist): the 20/40/60/80 % points of R over quests around this level, each
 -- rated at its own level (band edges), and the median R. nil when the database has none.
-function D.LevelDist(level)
+-- With your measured fight time / gap (cfg.fightMeasured / cfg.gapMeasured) the points are interpolated in
+-- (log F, log G) from QR_GEN.distGrid, the same standard built offline for a grid of fight times and gaps
+-- (review 2026-11-23: R and the band edges then use the same settings).
+local function gridPoint(level, cfg)
+    local g = QR_GEN and QR_GEN.distGrid
+    if not g or not (cfg and (cfg.fightMeasured or cfg.gapMeasured)) then return nil end
+    local F = cfg.fightBase
+    local G = cfg.gap or (cfg.lootTime + cfg.grindDistance / cfg.walkSpeed)
+    local function bracket(list, v)
+        v = math.max(list[1], math.min(list[#list], v))
+        for i = 1, #list - 1 do
+            if v <= list[i + 1] then
+                local t = (math.log(v) - math.log(list[i])) / (math.log(list[i + 1]) - math.log(list[i]))
+                return i, t
+            end
+        end
+        return #list - 1, 1
+    end
+    local fi, ft = bracket(g.F, F)
+    local gi, gt = bracket(g.G, G)
+    local nG = #g.G
+    local L = math.max(1, math.min(59, level))
+    local function at(a, b)
+        local d = g.d[(a - 1) * nG + b]
+        return d and d[L]
+    end
+    local d11, d12, d21, d22 = at(fi, gi), at(fi, gi + 1), at(fi + 1, gi), at(fi + 1, gi + 1)
+    if not (d11 and d12 and d21 and d22) then return nil end
+    local out = {}
+    for k = 1, 5 do
+        out[k] = (d11[k] * (1 - gt) + d12[k] * gt) * (1 - ft) + (d21[k] * (1 - gt) + d22[k] * gt) * ft
+    end
+    return out
+end
+
+function D.LevelDist(level, cfg)
     local t = QR_GEN and QR_GEN.dist
     if not t or not level then return nil end
-    local d = t[math.max(1, math.min(59, level))]
+    local d = gridPoint(level, cfg) or t[math.max(1, math.min(59, level))]
     if d and #d >= 5 then
         return { math.exp(d[1]), math.exp(d[2]), math.exp(d[4]), math.exp(d[5]) }, math.exp(d[3])
     end
+end
+
+-- Name of a dungeon wing / whole-run key (QR_GEN.wing): the locale's wing name, else the client's dungeon name.
+function D.WingName(key)
+    if L.WING and L.WING[key] then return L.WING[key] end
+    local w = QR_GEN.wing and QR_GEN.wing[key]
+    return w and D.DungeonName(w.z) or tostring(key)
 end
 
 function D.DungeonName(zone)
@@ -187,9 +229,10 @@ function D.BuildModel(questId)
         model.dungeon, model.dungeonFromTag = true, true
     end
     if model.inLog then
-        -- the client knows the XP of logged quests: it fills what the database lacks
+        -- the client's XP of a logged quest is the live WoW Forever value for your level: always preferred
+        -- (review 2026-11-23)
         local xp = clientQuestXP(questId)
-        if xp and (not rec.xp or rec.xp <= 0) then model.questXP, model.xpFromClient = xp, true end
+        if xp then model.questXP, model.xpFromClient = xp, true end
     end
     for _, code in ipairs(rec.f or {}) do
         local key = FLAG[code]
@@ -215,6 +258,7 @@ function D.BuildModel(questId)
             index = i, kind = KIND[o.k] or "event", fromObject = o.k == 4, N = o.n, countSource = o.cs,
             p = o.p, pUnknown = o.pu == 1, S = o.S, A = o.A, d = o.d, mobLevel = o.lv, rank = RANK[o.r] or "normal",
             synthetic = o.sy == 1, src = o.src, center = point(o.c), group = o.g, item = o.i, rs = o.rs,
+            dRoute = o.dr or 0, dDetour = o.dd or 0, dWing = o.dw, dMult = o.dm, out = o.ox, levelUnknown = o.lu == 1,
         }
         local lo = liveFor(i, o.n)
         obj.liveMatched = lo ~= nil
@@ -264,6 +308,27 @@ function D.BuildModel(questId)
         end
     end
 
+    -- dungeon quest: the normal run of its wing(s) (Generated.lua QR_GEN.wing, user 2026-11-23)
+    if rec.wd and QR_GEN.wing then
+        local run = { wings = rec.wd, need = rec.dn, T = 0, n = 0, kills = {}, shares = {},
+                      detourYards = rec.dt and rec.dt.y or 0, detourKills = rec.dt and rec.dt.k or {} }
+        for _, k in ipairs(rec.wd) do
+            local w = QR_GEN.wing[k]
+            if not w then run = nil; break end
+            run.T, run.n = run.T + w.t, run.n + (w.n or 0)
+            run.kills[#run.kills + 1] = w.k
+            run.shares[#run.shares + 1] = w.s  -- kill XP each member gets inside (group share x Forever factor)
+            run.inner = run.inner or w.s
+        end
+        model.run = run
+        -- progress on an objective inside the run: a run is behind you (rated by what is left)
+        for _, obj in ipairs(model.objectives) do
+            if run and (obj.dWing or 0) > 0 and obj.needed and (obj.N or 0) > 0 and obj.N < obj.needed then
+                model.runDone = true
+            end
+        end
+    end
+
     -- What cannot be estimated (user 2026-11-22: estimate where a sound method exists, else say which
     -- data is missing instead of inventing a number). A quest that only waits for its turn-in is
     -- estimable whatever its objectives were.
@@ -288,6 +353,17 @@ function D.BuildModel(questId)
             if lo.type == "reputation" and not lo.finished then miss(L.MISSING_REPUTATION) end
         end
         if rec.eu then miss(L.MISSING_ESCORT) end -- escort with no path and nothing to measure
+        if rec.pv then miss(L.MISSING_PVP) end   -- battleground quest
+        if rec.gq then miss(L.MISSING_GROUP) end -- group quest with an elite: no solo time from data
+        for i, o in ipairs(rec.o or {}) do
+            local obj = model.objectives[i]
+            if o.lu == 1 and obj and (obj.N or 0) > 0 then miss(L.MISSING_MOB_LEVEL) end -- level-scaling mob
+        end
+        if model.dungeon and not model.run then
+            -- raid, quest whose wing is unknown, or a wing without a run time
+            miss(rec.dm == "raid" and L.MISSING_DUNGEON_RAID or rec.dm == "wing" and L.MISSING_DUNGEON_WING
+                or L.MISSING_DUNGEON_RUNTIME)
+        end
         if #(rec.o or {}) == 0 then
             local walk = 0
             for _, lg in ipairs(rec.legs or {}) do if lg[1]:sub(1, 1) ~= "B" then walk = walk + lg[2] end end

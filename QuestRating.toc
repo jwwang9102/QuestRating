@@ -10,6 +10,7 @@
 Locale.lua
 Core.lua
 Estimate.lua
+KillTimer.lua
 Data\Generated.lua
 Data.lua
 Gear.lua

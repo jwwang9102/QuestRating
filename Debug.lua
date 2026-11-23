@@ -15,13 +15,37 @@ local function debugQuest(questId)
     QR.Print("[%d] %s  Lv%s  玩家 Lv%d  日誌中=%s  任務經驗=%d",
         questId, tostring(m.name), tostring(m.level), res.playerLevel, tostring(m.inLog), m.questXP or 0)
     if #m.flags > 0 then out("標記: %s", table.concat(m.flags, "、")) end
-    if m.xpFromClient then out("任務經驗取自遊戲（資料庫沒有）") end
+    local fb, nfb = QR.Kill.FightBase(res.playerLevel)
+    local gp, ngp = QR.Kill.Gap(res.playerLevel)
+    out("戰鬥時間：%s（單刷紀錄 %d 筆，等級 %d-%d）", fb and string.format("%.1f 秒/隻，實測中位數", fb)
+        or string.format("%d 秒，設定值（紀錄未滿 5 筆）", QR.Cfg().fightBase), nfb, res.playerLevel - 2, res.playerLevel)
+    out("戰鬥間隔：%s（紀錄 %d 筆；含換點和交任務的跑路，連續打怪時才準）", gp and string.format("%.1f 秒/隻，實測中位數", gp)
+        or "設定值（撿取＋走路）", ngp)
+    if m.xpFromClient then out("任務經驗取自遊戲（日誌中的任務一律用遊戲的數值）") end
     if m.dungeonFromTag then out("副本任務：依遊戲的任務類型判定") end
-    if res.dungeon and not res.est then out("→ %s（%s）", L.RATING[4], res.reasons[1] or L.REASON_DUNGEON); return end
     if res.prereqZone then out("副本前置：區域 %d（第 %d 環）", res.prereqZone, res.prereqDepth or 0) end
     if res.noData then out("%s：%s", L.NO_DATA, table.concat(res.reasons or {}, "、")); return end
     if m.map then out("主要地點：地圖 %s  %.1f, %.1f", tostring(m.map[1]), m.map[2] or 0, m.map[3] or 0) end
     local est = res.est
+    if est.dungeon then
+        local run = m.run
+        local names = {}
+        for _, k in ipairs(run.wings) do names[#names + 1] = QR.Data.WingName(k) end
+        out("副本：%s  一輪 %.0f 秒  擊殺 %d 隻  每人每輪經驗 %.0f（每隻 ×%s）", table.concat(names, "+"), run.T, run.n,
+            est.runXP or 0, f2(run.inner))
+        out("路線完成比例 %s  補打方式 %s  補打 %.0f 秒  輪數 %.2f  全隊需求 %s  已打過一輪=%s", f2(est.frac),
+            tostring(est.mode or "-"), est.catchT or 0, est.runs or 0, tostring(run.need or "-"), tostring(m.runDone or false))
+        out("自己的繞路 %.0f 秒、經驗 %.0f（路程 %d 碼）", est.plan and est.plan.detT or 0, est.plan and est.plan.detX or 0,
+            run.detourYards or 0)
+        out("同輪任務 %s  （經驗 %.0f，接交 %.0f 秒）", #(est.companions or {}) > 0 and table.concat(est.companions, ",") or "-",
+            est.otherXP or 0, est.otherT or 0)
+        for _, obj in ipairs(m.objectives) do
+            if (obj.dWing or 0) > 0 then
+                out("    目標%d 路線上 %d / 同區 %d  ×%d 人份  副本外營地 %s", obj.index, obj.dRoute or 0, obj.dWing,
+                    obj.dMult or 1, obj.out and string.format("%d 隻", obj.out[1]) or "無")
+            end
+        end
+    end
     for _, o in ipairs(est.objectives) do
         local obj = o.obj
         out("目標%d %s N=%s(%s) p=%s%s K=%d S=%d A=%.0f d=%s t擊殺=%s 等待=%.0f T=%.0f 怪經驗=%.0f Lv=%s %s",
@@ -56,7 +80,8 @@ local function debugQuest(questId)
             if obj.rs then out("    目標%d 物件重生 %d 秒（伺服器資料）", obj.index, obj.rs) end
         end
     end
-    out("經驗：任務 %d + 殺怪 %.0f = %.0f", m.questXP or 0, est.mobXP, est.XP)
+    out("經驗：任務 %d%s + 殺怪 %.0f = %.0f", m.questXP or 0,
+        (est.otherXP or 0) > 0 and string.format(" + 同輪任務 %d", est.otherXP) or "", est.mobXP, est.XP)
     out("E=%.0f/小時  B=%.0f/小時  R=%s%s", res.E, res.B, f2(res.R),
         res.Ralone and string.format("（不分攤 R=%s）", f2(res.Ralone)) or "")
     if res.cuts then
@@ -91,7 +116,7 @@ local function listLog()
             out("[%d] %s", id, tostring(why))
         else
             local name = res.model and res.model.name or "?"
-            if res.noData or res.dungeon or not res.est then -- dungeon quests: no time, efficiency is not used
+            if res.noData or not res.est then
                 out("[%d] %s  %s  %s", id, tostring(name), res.level and L.RATING[res.level] or "", table.concat(res.reasons or {}, "·"))
             else
                 out("[%d] %s  %s  R=%s  %.1f分%s", id, tostring(name), L.RATING[res.level], f2(res.R), res.est.T / 60,
