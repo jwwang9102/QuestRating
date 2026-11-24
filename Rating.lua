@@ -425,13 +425,34 @@ end
 -- Bonus a chain's follow-ups add (user 2026-11-23): the best one among the follow-ups on its route, a reward
 -- that is an upgrade (QR.Gear.Bonus) or a key quest (unlocks a dungeon, raid, area, reputation or skill: +2,
 -- as a key quest's own +2). Returns bonus, the follow-up's id.
-local function followUpBonus(ids, cfg)
+local function followUpBonus(ids, cfg, questId)
     local best, bestId = 0, nil
     for _, id in ipairs(ids or {}) do
         local rec = D.Record(id)
         local b = rec and (QR.Gear.Bonus(rec, cfg)) or 0
         if rec and (rec.kq == "t" or rec.kq == "k") then b = math.max(b, 2) end
         if b > best then best, bestId = b, id end
+    end
+    -- a key quest further on in the chain counts even when the chain cannot be estimated up to it (review
+    -- 2026-11-23: the druid bear-form steps lost their +2 when Body and Heart became "no data")
+    if best < 2 and questId then
+        local seen, frontier, depth = { [questId] = true }, { questId }, 0
+        while #frontier > 0 and depth < (cfg.chainMax or 30) and best < 2 do
+            local nxt = {}
+            for _, q in ipairs(frontier) do
+                local rec = D.Record(q)
+                for _, f in ipairs(rec and rec.cn or {}) do
+                    local frec = not seen[f] and D.Record(f)
+                    if frec and D.Available(frec) and not completed(f) then
+                        seen[f] = true
+                        if frec.kq == "t" or frec.kq == "k" then best, bestId = 2, f; break end
+                        nxt[#nxt + 1] = f
+                    end
+                end
+                if best >= 2 then break end
+            end
+            frontier, depth = nxt, depth + 1
+        end
     end
     return best, bestId
 end
@@ -591,8 +612,15 @@ function QR.Rate(questId)
             -- data does not matter (user 2026-11-23, e.g. Tier 0.5 quests)
             res.atMax, res.position = true, 2.0
             res.bonus, res.gearText, res.gear = QR.Gear.Bonus(rec, cfg)
+            -- a key quest further on in its chain adds +2, as for quests that can be estimated
+            res.followBonus, res.followBonusId = followUpBonus(nil, cfg, questId)
+            if res.followBonus > 0 then res.bonus = (res.bonus or 0) + res.followBonus end
             res.level = E.Level(2.0, res.bonus)
             res.reasons = { L.REASON_MAX_BASE }
+            if res.followBonus > 0 then
+                local frec = D.Record(res.followBonusId)
+                res.reasons[#res.reasons + 1] = string.format(L.REASON_FOLLOW_BONUS, frec and frec.t or "?", res.followBonus)
+            end
             if rec and rec.kq == "k" then
                 res.level, res.keyQuest = E.Level(2.0, (res.bonus or 0) + 2), "k"
                 res.reasons[#res.reasons + 1] = string.format(L.REASON_KEY_PLUS, L.KEY_KIND[rec.kw] or "")
@@ -646,10 +674,8 @@ function QR.Rate(questId)
     -- reward gear (OneForAll)
     res.bonus, res.gearText, res.gear = QR.Gear.Bonus(D.Record(questId), cfg)
     -- follow-ups on the chain's route with an upgrade or a key quest add their best bonus
-    if res.chainIds and #res.chainIds > 0 then
-        res.followBonus, res.followBonusId = followUpBonus(res.chainIds, cfg)
-        if res.followBonus > 0 then res.bonus = (res.bonus or 0) + res.followBonus end
-    end
+    res.followBonus, res.followBonusId = followUpBonus(res.chainIds, cfg, questId)
+    if res.followBonus > 0 then res.bonus = (res.bonus or 0) + res.followBonus end
     res.level = E.Level(res.position, res.bonus)
     -- key quests (user 2026-11-23; _tools/calibration/key_quests.tsv): every member needs it to enter a
     -- dungeon / raid / area -> the best rating; a dungeon key (one per group), a new reputation or system -> +2
