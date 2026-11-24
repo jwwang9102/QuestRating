@@ -410,6 +410,9 @@ function D.BuildModel(questId)
     if not model.ready then
         for i, o in ipairs(rec.o or {}) do
             local obj = model.objectives[i]
+            if o.k and o.k >= 1 and o.k <= 4 and not o.c and (o.S or 0) == 0 and not o.dw and obj and (obj.N or 0) > 0 then
+                miss(L.MISSING_SOURCE) -- kill / drop / object target with no source anywhere (build: same rule)
+            end
             if o.k == 5 and obj and (obj.N or 0) > 0 then
                 if o.s == "u" then
                     miss(L.MISSING_SOURCE)      -- item from a source we do not know

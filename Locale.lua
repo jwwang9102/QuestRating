@@ -65,6 +65,7 @@ QR.L = {
     DUNGEON_FINDER_RAW_ONE = " %d-%d／建議 %d-%d",
     DUNGEON_LIST_NONE = "  （目前等級附近沒有副本）",
     DUNGEON_REC_LEVEL = "  副本等級 %d-%d（尋求組隊）",
+    DUNGEON_REC_LEVEL_LIST = "  建議等級 %d-%d",
     DUNGEON_REC_LEVEL_ROUTE = "  副本等級 %d-%d（依怪物等級，無尋求組隊資料）",
     DUNGEON_LIST = "QuestRating：目前等級的副本推薦（含順便解的任務）",
     DUNGEON_LIST_LINE = "  %s  %s  每小時 %d 經驗  %d 分鐘  任務 %d 個",
@@ -100,7 +101,8 @@ QR.L = {
         UBRS = "黑石塔上層", ["DM-East"] = "厄運之槌東", ["DM-West"] = "厄運之槌西",
         ["DM-North"] = "厄運之槌北", ["Strat-Live"] = "斯坦索姆血色區", ["Strat-UD"] = "斯坦索姆亡靈區",
         Scholo = "通靈學院", Thanes = "族長之廳", Lordaeron = "羅德隆廢墟", Excavation = "挖掘場：濕地",
-        Dalaran = "達拉然城",
+        Dalaran = "達拉然城", Drowned = "沉沒之城", Kroldok = "克羅多克要塞", Alcaz = "奧卡茲監獄",
+        Blackmaw = "黑喉要塞", Shapers = "塑造者殿堂",
     },
 
     -- route legs (debug)

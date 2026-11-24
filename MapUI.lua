@@ -118,6 +118,8 @@ end
 -- OneForAll dungeon record -> our wing keys (Dire Maul and Blackrock Spire share an instance map)
 local KEY_WINGS = { dme = { "DM-East" }, dmw = { "DM-West" }, dmn = { "DM-North" }, lbrs = { "LBRS" }, ubrs = { "UBRS" } }
 local function wingsOf(d)
+    local byName = QR_GEN and QR_GEN.wingName and d.name and QR_GEN.wingName[d.name]
+    if byName then return { byName } end -- OneForAll's dungeon name (the build maps them, user 2026-11-23)
     if KEY_WINGS[d.key] then return KEY_WINGS[d.key] end
     local out = {}
     local wings = QR_GEN and QR_GEN.wing or {}
@@ -126,9 +128,7 @@ local function wingsOf(d)
     else -- WoW Forever's new dungeons have no instance ID in OneForAll
         local n = d.name or ""
         if n:find("Thanes") and wings.Thanes then out[1] = "Thanes"
-        elseif n:find("Lordaeron") and wings.Lordaeron then out[1] = "Lordaeron"
-        elseif n:find("Excavation") then out[1] = "Excavation"
-        elseif n:find("Dalaran") then out[1] = "Dalaran" end
+        elseif n:find("Lordaeron") and wings.Lordaeron then out[1] = "Lordaeron" end
     end
     table.sort(out)
     return out
@@ -180,7 +180,8 @@ local function addDungeonLines(tt)
         end
         if (r.quests or 0) > 0 then tt:AddLine(string.format(L.DUNGEON_REC_QUESTS, r.quests), 0.8, 0.8, 0.8) end
         if not r.outside and r.lo and r.lo > 0 then
-            tt:AddLine(string.format(r.finder and L.DUNGEON_REC_LEVEL or L.DUNGEON_REC_LEVEL_ROUTE, r.lo, r.hi), 0.8, 0.8, 0.8)
+            local fmt = r.finder == "list" and L.DUNGEON_REC_LEVEL_LIST or (r.finder and L.DUNGEON_REC_LEVEL or L.DUNGEON_REC_LEVEL_ROUTE)
+            tt:AddLine(string.format(fmt, r.lo, r.hi), 0.8, 0.8, 0.8)
         end
     end
     tt:Show() -- resize; the guard stops this OnShow from adding the lines again
@@ -204,21 +205,17 @@ function M.ListDungeons()
             it.r.xph, math.floor(it.r.T / 60 + 0.5), it.r.quests))
     end
     local pl = UnitLevel("player") or 1
-    for key in pairs(QR.NO_DATA_WINGS) do
-        if not (QR_GEN.wing and QR_GEN.wing[key]) then -- (once a route exists it is rated above)
-            local lo, hi = QR.WingRange(key)
-            if not lo or (pl >= lo and pl <= hi) then
-                DEFAULT_CHAT_FRAME:AddMessage("  " .. QR.Data.WingName(key) .. "  " .. L.DUNGEON_NO_DATA)
-            end
+    for key in pairs(QR.NoDataWings()) do
+        local lo, hi = QR.WingRange(key)
+        if not lo or (pl >= lo and pl <= hi) then
+            DEFAULT_CHAT_FRAME:AddMessage("  " .. QR.Data.WingName(key) .. "  " .. L.DUNGEON_NO_DATA)
         end
     end
     -- the finder's raw values (min-max, recommended min-max), to check in game
     local raw = {}
     local keys = {}
     for key in pairs(QR_GEN and QR_GEN.wing or {}) do keys[#keys + 1] = key end
-    for key in pairs(QR.NO_DATA_WINGS) do
-        if not (QR_GEN.wing and QR_GEN.wing[key]) then keys[#keys + 1] = key end
-    end
+    for key in pairs(QR.NoDataWings()) do keys[#keys + 1] = key end
     for _, key in ipairs(keys) do
         local r = QR.WingFinderRaw(key)
         raw[#raw + 1] = key .. (r and string.format(L.DUNGEON_FINDER_RAW_ONE, r[1], r[2], r[3], r[4]) or " -")

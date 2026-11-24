@@ -744,9 +744,16 @@ local LFG_WINGS = { [1] = { "WC" }, [2] = { "Scholo" }, [3] = { "RFC" }, [5] = {
     [23] = { "ZF" }, [25] = { "Mara" }, [27] = { "ST" }, [29] = { "BRD" }, [31] = { "LBRS" }, [33] = { "DM-East" },
     [35] = { "DM-West" }, [37] = { "DM-North" }, [39] = { "Strat-Live", "Strat-UD" }, [43] = { "UBRS" },
     [3272] = { "Lordaeron" }, [3273] = { "Thanes" }, [3271] = { "Dalaran" }, [3274] = { "Excavation" } }
--- WoW Forever dungeons without any creature data (server and ForeverDB: no spawns on their maps 2959 / 2998),
--- so no route: shown as "no data" instead of not at all (user 2026-11-23: the Excavation Site was missing)
-QR.NO_DATA_WINGS = { Dalaran = true, Excavation = true }
+-- WoW Forever dungeons without any creature data (server and ForeverDB: no spawns on their maps), so no route:
+-- shown as "no data" instead of not at all (user 2026-11-23: the Excavation Site was missing). The build lists
+-- every dungeon with its recommended levels (QR_GEN.wingLv); the ones without a wing entry have no route.
+function QR.NoDataWings()
+    local out = {}
+    for key in pairs(QR_GEN and QR_GEN.wingLv or {}) do
+        if not (QR_GEN.wing and QR_GEN.wing[key]) then out[key] = true end
+    end
+    return out
+end
 local finderRange, finderRaw = nil, {}
 local function finderRanges()
     if finderRange then return finderRange end
@@ -773,14 +780,17 @@ local function finderRanges()
     if n == all then finderRange = out end -- keep asking until the client has every entry
     return out
 end
--- lo, hi, fromFinder
+-- lo, hi, source ("list": the published recommended levels, user 2026-11-23; "finder": the client's dungeon
+-- finder; false: the route's mob levels)
 function QR.WingRange(key)
+    local lv = QR_GEN and QR_GEN.wingLv and QR_GEN.wingLv[key]
+    if lv then return lv[1], lv[2], "list" end
     local r = finderRanges()[key]
     local w = QR_GEN and QR_GEN.wing and QR_GEN.wing[key]
     -- the allowed range (used when the recommended one is a single level) can be very wide with scaling: the
     -- route's mob levels come first then; a finder range far from them is a mismatch (e.g. a scaling cap)
     if r and not r.rec and w and w.lo then r = nil end
-    if r and not (w and w.lo and (r[1] > w.hi + 5 or r[2] < w.lo - 5)) then return r[1], r[2], true end
+    if r and not (w and w.lo and (r[1] > w.hi + 5 or r[2] < w.lo - 5)) then return r[1], r[2], "finder" end
     return w and w.lo, w and w.hi, false
 end
 -- raw finder values of a wing (for /qr dungeons): { min, max, recommended min, recommended max } or nil
@@ -797,8 +807,12 @@ function QR.RateWing(key)
 end
 function rateWing(key)
     local w = QR_GEN and QR_GEN.wing and QR_GEN.wing[key]
-    if QR.ready and not w and QR.NO_DATA_WINGS[key] then
+    if QR.ready and not w and QR_GEN.wingLv and QR_GEN.wingLv[key] then
         local lo, hi, finder = QR.WingRange(key)
+        local pl = UnitLevel("player") or 1
+        if lo and hi and (pl < lo or pl > hi) then
+            return { outside = true, key = key, lo = lo, hi = hi, finder = finder } -- not recommended, as rated wings
+        end
         return { noData = true, key = key, lo = lo, hi = hi, finder = finder }
     end
     if not (QR.ready and w) then return nil end
