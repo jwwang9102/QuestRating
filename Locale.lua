@@ -39,6 +39,7 @@ QR.L = {
     LOCATION_UNKNOWN = "目標位置不明",
     -- why a quest cannot be rated ("資料不足：…")
     MISSING_SOURCE = "目標物品來源不明",
+    MISSING_CRAFT = "需要專業製作或採集的物品",
     MISSING_PLACE = "目標地點不明",
     MISSING_OBJECTIVE = "目標無法估算",
     MISSING_REPUTATION = "需要聲望",

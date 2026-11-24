@@ -412,7 +412,9 @@ function D.BuildModel(questId)
             local obj = model.objectives[i]
             if o.k == 5 and obj and (obj.N or 0) > 0 then
                 if o.s == "u" then
-                    miss(L.MISSING_SOURCE)      -- item from a source we do not know (crafted, gathered ...)
+                    miss(L.MISSING_SOURCE)      -- item from a source we do not know
+                elseif o.s == "m" then
+                    miss(L.MISSING_CRAFT)       -- made or gathered with a profession (build: PROF_ITEMS)
                 elseif (o.s == "t" or o.s == "v" or o.s == "e") and not o.c then
                     miss(L.MISSING_PLACE)       -- talk / buy / reach a place with no known location
                 elseif not o.s and ((o.n or 1) > 1 or not o.c) then
