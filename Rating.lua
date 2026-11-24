@@ -4,7 +4,7 @@ local E = QR.Estimate
 local D = QR.Data
 
 -- Turns a model into a rating: R, continuous position, level 0..4 and direct reasons.
--- Time efficiency, quest chains (follow-up quests can only raise R), dungeon quests as the normal run of
+-- Time efficiency, quest chains (ranked by their best whole route), dungeon quests as the normal run of
 -- their wing (user 2026-11-23: no longer "very high" by default), reward gear from OneForAll (level bonus).
 
 local modelCache = {} -- [questId] = model | { fail = reason }
@@ -229,7 +229,8 @@ local function rateDungeonQuest(model, pl, cfg, withNearby)
     if model.insideLeft then
         local o, n, list = open()
         if o and o.T > 0 and est.T > 0 then
-            if o.XP / o.T > est.XP / est.T then o.solve = "out"; return o, n, list end
+            -- by quest XP per second (the run: with its other quests), not kill XP (user 2026-11-23)
+            if (o.XP - o.mobXP) / o.T > (est.XP - est.mobXP) / est.T then o.solve = "out"; return o, n, list end
             est.solve = "in"
         end
     end
@@ -252,48 +253,187 @@ local function soloEstimate(questId, lv, cfg)
     return est
 end
 
--- The chain from this quest on (user 2026-11-22: each quest at its own level). A follow-up is
--- estimated at the level you would do it, max(player level, its quest level), and its XP is
--- divided by the grinding baseline of that level, so a level-50 quest in a level-30 chain counts
--- as "hours of grinding saved at 50", not as huge XP at 30. At each step the follow-up with the
--- best normalised XP per second (an exclusive choice takes the better branch), x chainDecay^i,
--- plus the walk from the previous turn-in, each follow-up with its usual route sharing. Stops at a quest
--- that cannot be estimated. You can stop anywhere in a chain, so the chain counts up to its best step (the
--- most efficient leading part; user 2026-11-23: weak or long later steps must not drag down the start).
--- Returns grinding hours saved (H), total seconds, steps, { ids } of that part; R of the chain = H * 3600 / T.
-local function chainEstimate(questId, est0, pl, cfg, B0)
-    local seen = { [questId] = true }
-    local H, T, ids = est0.XP / B0, est0.T, {}
-    local bestH, bestT, bestSteps = H, T, 0
-    local cur = questId
-    local top = ((GetMaxPlayerLevel and GetMaxPlayerLevel()) or 60) - 1 -- quest XP is 0 at max level
-    for i = 1, cfg.chainDepth do
-        local best
-        for _, f in ipairs(followers(cur)) do
-            if not seen[f.id] then
-                seen[f.id] = true
-                local lv = math.min(top, math.max(pl, f.rec.lv or pl))
-                local est = soloEstimate(f.id, lv, cfg)
-                local B = E.Baseline(lv, cfg)
-                if est and B > 0 then
-                    local gapT = f.yards and E.LegTime(f.yards, cfg, lv) or 0
-                    local h = est.XP / B
-                    local r = h / (est.T + gapT)
-                    if not best or r > best.r then
-                        best = { id = f.id, h = h, T = est.T, gapT = gapT, r = r }
-                    end
+-- Quest chains (user 2026-11-23): database cn / cp = the next / previous quests of the same chain (the build
+-- tells a chain from a mere prerequisite: next in chain or offered right after, not a breadcrumb, not an opener
+-- of 3+ quests). chainCost: hours saved and seconds of f, the next (forward) or previous quest of questId: a
+-- follow-up at the level you would do it, max(your level, its quest level), a quest before at its own level (at
+-- most yours), each with its usual route sharing (as the standard), plus the walk between turn-in and giver;
+-- quests you have done are left out (user 2026-11-23: only what is left of the chain counts; the build, without
+-- your progress, counts the whole chain). nil when it cannot be estimated: the chain stops there.
+-- Mirror of the build's chain_cost (that one filters by the quest's faction, this one by yours).
+local function chainCost(questId, f, pl, cfg, top, forward)
+    local rec, frec = D.Record(questId), D.Record(f)
+    if not (rec and frec and D.Available(frec)) then return nil end
+    local lv = forward and math.min(top, math.max(pl, frec.lv or pl)) or math.max(1, math.min(pl, frec.lv or pl))
+    local est = soloEstimate(f, lv, cfg)
+    local B = E.Baseline(lv, cfg)
+    if not (est and B > 0) then return nil end
+    local src, dst = rec, f
+    if not forward then src, dst = frec, questId end
+    local yards
+    for _, x in ipairs(src.nq or {}) do
+        if x[1] == dst and x[2] and x[2] >= 0 then yards = x[2] end
+    end
+    return est.XP / B, est.T + (yards and E.LegTime(yards, cfg, lv) or 0)
+end
+
+-- Every route on from questId (forward) or back from it: { { h, t, ids }, ... }; a choice of two (two next or
+-- two previous quests) gives two routes (user 2026-11-23). Mirror of the build's chain_paths.
+local CHAIN_PATHS = 32
+local function contains(list, x)
+    for _, v in ipairs(list or {}) do if v == x then return true end end
+    return false
+end
+-- a quest you can no longer take: one it excludes is done or in your log (as openToYou)
+local function closedOff(id)
+    if inLogQuest(id) then return false end -- taken: it is yours
+    local rec = D.Record(id)
+    for _, x in ipairs(rec and rec.ex or {}) do
+        if completed(x) or inLogQuest(x) then return true end
+    end
+    return false
+end
+-- every one of `ids` is needed (all in pa, none excludes another)
+local function allNeeded(rec, ids)
+    if #ids < 2 then return false end
+    for _, p in ipairs(ids) do if not contains(rec.pa, p) then return false end end
+    for _, a in ipairs(ids) do
+        local ra = D.Record(a)
+        for _, b in ipairs(ids) do
+            if a ~= b and (contains(ra and ra.ex, b) or contains((D.Record(b) or {}).ex, a)) then return false end
+        end
+    end
+    return true
+end
+local chainPaths
+-- the quests in preds that child needs (all), each with its best route back, summed: h, t, { ids }; seen is
+-- left as it was. Mirror of the build's chain_needed.
+local function chainNeeded(child, preds, pl, cfg, top, seen, depth, memo)
+    local h, t, ids, added = 0, 0, {}, {}
+    for _, p in ipairs(preds) do
+        if not seen[p] and not completed(p) and not closedOff(p) then
+            local key = "b" .. child .. ":" .. p
+            if memo[key] == nil then memo[key] = { chainCost(child, p, pl, cfg, top, false) } end
+            local ch, ct = memo[key][1], memo[key][2]
+            if ch then
+                seen[p] = true; added[#added + 1] = p
+                local best, bestR
+                for _, r in ipairs(chainPaths(p, pl, cfg, top, false, seen, depth + 1, memo)) do
+                    local rr = (ct + r.t) > 0 and (ch + r.h) / (ct + r.t) or 0
+                    if not bestR or rr > bestR then best, bestR = r, rr end
+                end
+                h, t = h + ch + best.h, t + ct + best.t
+                ids[#ids + 1] = p
+                for _, id in ipairs(best.ids) do
+                    ids[#ids + 1] = id
+                    if not seen[id] then seen[id] = true; added[#added + 1] = id end
                 end
             end
         end
-        if not best then break end
-        H = H + best.h * cfg.chainDecay ^ i
-        T = T + best.T + best.gapT
-        cur = best.id
-        ids[#ids + 1] = best.id
-        if bestSteps == 0 or H / T > bestH / bestT then bestH, bestT, bestSteps = H, T, i end
     end
-    for k = #ids, bestSteps + 1, -1 do ids[k] = nil end
-    return bestH, bestT, bestSteps, ids
+    for _, id in ipairs(added) do seen[id] = nil end
+    return h, t, ids
+end
+local function sortedLinks(rec, forward)
+    local list = {}
+    local links = rec.cp
+    if forward then links = rec.cn end -- (not "forward and cn or cp": a missing cn would read cp)
+    for _, f in ipairs(links or {}) do list[#list + 1] = f end
+    table.sort(list)
+    return list
+end
+function chainPaths(questId, pl, cfg, top, forward, seen, depth, memo)
+    local rec = D.Record(questId)
+    local out = {}
+    if rec and depth < (cfg.chainMax or 30) then
+        local list = sortedLinks(rec, forward)
+        if not forward and allNeeded(rec, list) then
+            -- every one of them is needed (The Hermit Tanner needs 95494 and 95507): one route
+            local h, t, ids = chainNeeded(questId, list, pl, cfg, top, seen, depth, memo)
+            out[1] = { h = h, t = t, ids = ids }
+            return out
+        end
+        if not forward then
+            -- one of a choice done: the quest's prerequisite is met, nothing before it is left (review 2026-11-23:
+            -- after Escape Through Force, Escape Through Stealth can no longer be taken)
+            for _, f in ipairs(list) do
+                if completed(f) then out[1] = { h = 0, t = 0, ids = {} }; return out end
+            end
+            for _, f in ipairs(rec.p1 or {}) do -- any one of p1 done also meets it
+                if completed(f) then out[1] = { h = 0, t = 0, ids = {} }; return out end
+            end
+        end
+        for _, f in ipairs(list) do
+            if not seen[f] and not completed(f) and not closedOff(f) then -- done or shut out: left out
+                local key = (forward and "f" or "b") .. questId .. ":" .. f
+                if memo[key] == nil then memo[key] = { chainCost(questId, f, pl, cfg, top, forward) } end
+                local h, t = memo[key][1], memo[key][2]
+                if h then
+                    seen[f] = true
+                    -- f's other needed quests join the route (mirror of the build's chain_paths)
+                    local xh, xt, xids = 0, 0, {}
+                    if forward then
+                        local frec = D.Record(f)
+                        local fcp = frec and sortedLinks(frec, false) or {}
+                        if frec and allNeeded(frec, fcp) then
+                            local others = {}
+                            for _, p in ipairs(fcp) do if p ~= questId then others[#others + 1] = p end end
+                            xh, xt, xids = chainNeeded(f, others, pl, cfg, top, seen, depth + 1, memo)
+                        end
+                    end
+                    local xadded = {}
+                    for _, id in ipairs(xids) do if not seen[id] then seen[id] = true; xadded[#xadded + 1] = id end end
+                    for _, p in ipairs(chainPaths(f, pl, cfg, top, forward, seen, depth + 1, memo)) do
+                        local ids = { f }
+                        for _, id in ipairs(xids) do ids[#ids + 1] = id end
+                        for _, id in ipairs(p.ids) do ids[#ids + 1] = id end
+                        out[#out + 1] = { h = h + xh + p.h, t = t + xt + p.t, ids = ids }
+                        if #out >= CHAIN_PATHS then break end
+                    end
+                    for _, id in ipairs(xadded) do seen[id] = nil end
+                    seen[f] = nil
+                    if #out >= CHAIN_PATHS then return out end
+                end
+            end
+        end
+    end
+    if #out == 0 then out[1] = { h = 0, t = 0, ids = {} } end
+    return out
+end
+
+-- The whole chain the quest belongs to (user 2026-11-23), back to its first quest and on to its last. A choice
+-- of two is two routes: a quest on both (before the choice) takes the better route, a quest after it its own
+-- branch. Returns grinding hours saved (H), total seconds, { ids } of the follow-ups and { ids } of the quests
+-- before on the best route through the quest; R = H * 3600 / T. Mirror of the build's chain_rate.
+local function chainEstimate(questId, est0, pl, cfg, B0)
+    local top = ((GetMaxPlayerLevel and GetMaxPlayerLevel()) or 60) - 1 -- quest XP is 0 at max level
+    local H0, T0 = est0.XP / B0, est0.T
+    local memo = {}
+    local fw = chainPaths(questId, pl, cfg, top, true, { [questId] = true }, 0, memo)
+    local bw = chainPaths(questId, pl, cfg, top, false, { [questId] = true }, 0, memo)
+    local bestR, bestH, bestT, bestF, bestB
+    for _, f in ipairs(fw) do
+        for _, b in ipairs(bw) do
+            local T = T0 + f.t + b.t
+            local R = T > 0 and (H0 + f.h + b.h) / T or 0
+            if not bestR or R > bestR + 1e-15 then bestR, bestH, bestT, bestF, bestB = R, H0 + f.h + b.h, T, f.ids, b.ids end
+        end
+    end
+    return bestH, bestT, bestF, bestB
+end
+
+-- Bonus a chain's follow-ups add (user 2026-11-23): the best one among the follow-ups on its route, a reward
+-- that is an upgrade (QR.Gear.Bonus) or a key quest (unlocks a dungeon, raid, area, reputation or skill: +2,
+-- as a key quest's own +2). Returns bonus, the follow-up's id.
+local function followUpBonus(ids, cfg)
+    local best, bestId = 0, nil
+    for _, id in ipairs(ids or {}) do
+        local rec = D.Record(id)
+        local b = rec and (QR.Gear.Bonus(rec, cfg)) or 0
+        if rec and (rec.kq == "t" or rec.kq == "k") then b = math.max(b, 2) end
+        if b > best then best, bestId = b, id end
+    end
+    return best, bestId
 end
 
 local function buildReasons(res, model, est, cfg)
@@ -338,7 +478,13 @@ local function buildReasons(res, model, est, cfg)
     -- bonus sources are always named
     if res.gearText then add(res.gearText) end
     if res.gear and res.gear.loading then add(L.REASON_GEAR_LOADING) end
-    if res.chainRaised then add(string.format(L.REASON_CHAIN, res.chainSteps)) end
+    if res.chainSteps or res.chainBack then
+        add(string.format(L.REASON_CHAIN_AVG, #(res.chainBack or {}), res.chainSteps or 0))
+    end
+    if res.followBonus and res.followBonus > 0 then
+        local frec = D.Record(res.followBonusId)
+        add(string.format(L.REASON_FOLLOW_BONUS, frec and frec.t or "?", res.followBonus))
+    end
     -- a grey quest: that alone explains the rating
     if not res.atMax and model.level and model.level <= E.GrayLevel(res.playerLevel) then
         add(L.REASON_QUEST_GRAY)
@@ -486,22 +632,24 @@ function QR.Rate(questId)
     end
     res.cuts = scale.thresholds
     res.position = res.atMax and 2.0 or E.Position(res.R, scale)
-    -- follow-up quests: only when the whole chain is more efficient than this quest alone
+    -- a chain (user 2026-11-23): ranked by its best whole route, also when lower than alone
     if not res.atMax and est.T > 0 then
-        local cH, cT, steps, ids
-        if res.B > 0 then cH, cT, steps, ids = chainEstimate(questId, est, pl, cfg, res.B) end
-        if cH and steps > 0 and cT > 0 then
-            res.chainSteps, res.chainIds = steps, ids
+        local cH, cT, ids, back
+        if res.B > 0 then cH, cT, ids, back = chainEstimate(questId, est, pl, cfg, res.B) end
+        if cH and cT > 0 and (#ids > 0 or #back > 0) then
+            res.chainSteps, res.chainIds, res.chainBack = #ids, ids, back
             res.Rchain = cH * 3600 / cT
-            if res.Rchain > res.R then
-                local p = E.Position(res.Rchain, scale)
-                res.chainRaised = E.Level(p, 0) > E.Level(res.position, 0)
-                res.position = p
-            end
+            local p = E.Position(res.Rchain, scale)
+            res.position = p
         end
     end
     -- reward gear (OneForAll)
     res.bonus, res.gearText, res.gear = QR.Gear.Bonus(D.Record(questId), cfg)
+    -- follow-ups on the chain's route with an upgrade or a key quest add their best bonus
+    if res.chainIds and #res.chainIds > 0 then
+        res.followBonus, res.followBonusId = followUpBonus(res.chainIds, cfg)
+        if res.followBonus > 0 then res.bonus = (res.bonus or 0) + res.followBonus end
+    end
     res.level = E.Level(res.position, res.bonus)
     -- key quests (user 2026-11-23; _tools/calibration/key_quests.tsv): every member needs it to enter a
     -- dungeon / raid / area -> the best rating; a dungeon key (one per group), a new reputation or system -> +2
@@ -668,15 +816,27 @@ end
 -- maps that fit your level (QR_GEN.zdist, built offline the same way). A map fits when its quest levels
 -- (QR_GEN.zlv, 20-80 %) are at most 4 above you and not all grey. Returns { level, xph, quests, good, hubs }
 -- or nil (max level, the map does not fit, no standard, nothing to take). Mirror of the build's map_plan / ZDIST.
--- the zone map you are on (a micro map such as a cave counts as its zone; inside a dungeon: none)
+-- the zone map you are on: the first zone map up the parents of where you stand (a cave, a building, a dock or
+-- any other sub-map counts as its zone; user 2026-11-23: on Darkshore the map rating fell from "very high" to "very
+-- low" for a while: only micro maps were walked up, so another sub-map type, or no map during a load, read as
+-- "not on this map" and added the 600 s trip, and at level 13 the bands lie within 1.5x of each other). No map
+-- for a moment (loading, a transition): the last zone seen. Inside a dungeon or on a continent: none.
+local lastZone
 local function playerZoneMap()
+    if IsInInstance and IsInInstance() then lastZone = nil; return nil end
     local id = C_Map and C_Map.GetBestMapForUnit and C_Map.GetBestMapForUnit("player")
-    for _ = 1, 5 do
-        local info = id and C_Map.GetMapInfo(id)
-        if not info then return nil end
-        if info.mapType ~= (Enum and Enum.UIMapType and Enum.UIMapType.Micro or 5) then return id end
+    if not id then return lastZone end
+    local zoneType = Enum and Enum.UIMapType and Enum.UIMapType.Zone or 3
+    for _ = 1, 8 do
+        local info = C_Map.GetMapInfo(id)
+        if not info then break end
+        if info.mapType == zoneType then lastZone = id; return id end
+        if info.mapType ~= nil and info.mapType < zoneType then break end -- continent / world / cosmic
         id = info.parentMapID
+        if not id or id == 0 then break end
     end
+    lastZone = nil
+    return nil
 end
 
 function QR.RateZone(uiMap)

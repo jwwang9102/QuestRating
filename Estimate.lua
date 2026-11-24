@@ -160,6 +160,10 @@ function E.Objective(obj, playerLevel, cfg, party)
     -- the walk between camps merged offline (walking to targets up at the next camp beats waiting), once
     local cw = (not (obj.synthetic or not obj.S) and obj.campWalk) or 0
     r.T = r.K * r.tKill + r.wait + (r.altT or 0) + (cw > 0 and E.LegTime(cw, cfg, playerLevel) or 0)
+    -- creature drops and objects with close times, both taken while farming (build: bf, user 2026-11-23)
+    if obj.both then
+        r.T, r.wait, r.xp, r.K = r.T * obj.both, r.wait * obj.both, r.xp * obj.both, r.K * obj.both
+    end
     return r
 end
 
@@ -370,12 +374,11 @@ function E.Dungeon(model, playerLevel, cfg, companions)
         res.companions[#res.companions + 1] = c.id
     end
     res.runs, res.Troute, res.TrouteAlone = 1, travelTime(), travelTime()
-    -- this quest's catch-up: the option with the best XP per second (user 2026-11-23)
+    -- this quest's catch-up: the quickest option (user 2026-11-23: not the one with more kill XP)
     local rest = (1 - plan.frac) * qxp
-    local bestMode, best, bestR
+    local bestMode, best
     for mode, o in pairs(plan.opts) do
-        local r = (XP + rest + o.X) / (T + o.T)
-        if not bestR or r > bestR then bestMode, best, bestR = mode, o, r end
+        if not best or o.T < best.T or (o.T == best.T and mode < bestMode) then bestMode, best = mode, o end
     end
     if best then
         XP, T = XP + rest + best.X, T + best.T
@@ -388,8 +391,9 @@ function E.Dungeon(model, playerLevel, cfg, companions)
     if model.runDone then
         local nr = E.DungeonPlan(model, playerLevel, cfg, true)
         local o = nr.opts.out
-        -- with the objectives outside the run (nr.outT / outX), not the detour inside
-        if o and (qxp + o.X + nr.outX) / (o.T + nr.outT + res.Tfixed) > XP / T then
+        -- with the objectives outside the run (nr.outT / outX), not the detour inside; by quest XP per second
+        -- (this quest; the run: with its other quests), not kill XP (user 2026-11-23)
+        if o and qxp / (o.T + nr.outT + res.Tfixed) > (qxp + res.otherXP) / T then
             res.mode, res.catchT, res.runs, res.companions, res.otherXP, res.otherT = "out", o.T, 0, {}, 0, 0
             res.Troute, res.TrouteAlone, res.Tfarm, res.mobXP = 0, 0, o.T + nr.outT, o.X + nr.outX
             res.XP, res.T = qxp + o.X + nr.outX, o.T + nr.outT + res.Tfixed

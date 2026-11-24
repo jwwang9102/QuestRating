@@ -180,6 +180,13 @@ end
 -- Only sizes and anchors are changed, after Blizzard's own code has run. 0 turns it off.
 ---------------------------------------------------------------------------------------------
 local logBase -- Blizzard's own window widths, read once before we change anything
+-- Never in combat (user 2026-11-23: clicking a tracker title in combat did nothing; these hooks run on the
+-- path that opens the map and changed its frames from addon code): skipped, applied when combat ends.
+local widenPending = false
+local function inCombat()
+    if InCombatLockdown and InCombatLockdown() then widenPending = true; return true end
+    return false
+end
 
 local function extraWidth()
     return math.max(0, math.floor(QR.Cfg().questLogExtraWidth or 0))
@@ -204,7 +211,7 @@ end
 -- window and map area, after Blizzard sized the window and anchored the map area
 -- (post-hook of UpdateSpacerFrameAnchoring, which ends every display-state change)
 local function layoutMap(map)
-    if not captureBase() then return end
+    if inCombat() or not captureBase() then return end
     if not (map.QuestLog and map.QuestLog:IsShown()) then return end -- no log: Blizzard's own layout
     local extra = extraWidth()
     map.TitleCanvasSpacerFrame:SetPoint("BOTTOMRIGHT", map, "TOPRIGHT", -3 - logBase.questLogWidth - extra, -67)
@@ -216,6 +223,7 @@ end
 
 -- the parchment behind the list: Blizzard sets it to its atlas size, anchored top-left only
 local function fitListBackground(scroll)
+    if inCombat() then return end
     local bg = scroll and scroll.Background
     local atlas = bg and bg.GetAtlas and bg:GetAtlas()
     local info = atlas and C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(atlas)
@@ -224,7 +232,7 @@ end
 
 -- pooled rows: widen every active row the first time (and after a width change)
 local function widenPool(pool, objective)
-    if not (pool and pool.EnumerateActive) then return end
+    if inCombat() or not (pool and pool.EnumerateActive) then return end
     local extra = extraWidth()
     for obj in pool:EnumerateActive() do
         if obj.qrWidened ~= extra then
@@ -251,7 +259,7 @@ end
 
 local function widenDetails()
     local d = _G.QuestMapFrame and QuestMapFrame.DetailsFrame
-    if not d then return end
+    if inCombat() or not d then return end
     local extra = extraWidth()
     widen(d, extra)
     if d.ScrollFrame then widen(d.ScrollFrame, extra); widen(d.ScrollFrame.Contents, extra) end
@@ -272,14 +280,15 @@ local function widenDetails()
     widen(d.AbandonButton, third)
     widen(d.ShareButton, third)
     widen(d.TrackButton, extra - 2 * third)
-    if d.Bg and d.AdjustBackgroundTexture and d:IsShown() then d:AdjustBackgroundTexture(d.Bg) end
+    -- (Blizzard's AdjustBackgroundTexture is not called from here: Blizzard code run from an addon taints what
+    -- it writes)
 end
 
 -- QuestInfo texts in the details view: Blizzard sets them to the template's contentWidth
 local lastInfoTemplate
 local function widenQuestInfo(template)
     lastInfoTemplate = template
-    if template ~= _G.QUEST_TEMPLATE_MAP_DETAILS or not template.contentWidth then return end
+    if template ~= _G.QUEST_TEMPLATE_MAP_DETAILS or not template.contentWidth or inCombat() then return end
     local w = template.contentWidth + extraWidth()
     for _, fs in ipairs({ _G.QuestInfoTitleHeader, _G.QuestInfoObjectivesText, _G.QuestInfoTimerText,
                           _G.QuestInfoDescriptionText }) do
@@ -292,15 +301,13 @@ local function widenQuestInfo(template)
 end
 
 local function applyLogWidth()
-    if not captureBase() then return end
+    if inCombat() or not captureBase() then return end
+    widenPending = false
     QuestMapFrame:SetWidth(logBase.panel + extraWidth())
     widenList()
     widenDetails()
-    if WorldMapFrame.UpdateSpacerFrameAnchoring then
-        WorldMapFrame:UpdateSpacerFrameAnchoring() -- our post-hook then sizes the window
-    else
-        layoutMap(WorldMapFrame)
-    end
+    -- our own layout after Blizzard's (not Blizzard's UpdateSpacerFrameAnchoring called from here: taint)
+    layoutMap(WorldMapFrame)
 end
 
 local widenHooked = false
@@ -329,6 +336,7 @@ local function hookWiden()
     if type(_G.QuestInfo_AdjustTitleWidth) == "function" then
         hooksecurefunc("QuestInfo_AdjustTitleWidth", function(delta)
             guard("QuestMapFrame width", function()
+                if inCombat() then return end
                 local t = lastInfoTemplate
                 if t and t == _G.QUEST_TEMPLATE_MAP_DETAILS and t.contentWidth and _G.QuestInfoTitleHeader then
                     QuestInfoTitleHeader:SetWidth(t.contentWidth + (delta or 0) + extraWidth())
@@ -341,6 +349,11 @@ local function hookWiden()
     end
     qmf:HookScript("OnShow", function() guard("QuestMapFrame width", applyLogWidth) end)
     map:HookScript("OnShow", function() guard("QuestMapFrame width", applyLogWidth) end)
+    local regen = CreateFrame("Frame")
+    regen:RegisterEvent("PLAYER_REGEN_ENABLED")
+    regen:SetScript("OnEvent", function()
+        if widenPending and map:IsShown() then guard("QuestMapFrame width", applyLogWidth) end
+    end)
     return true
 end
 

@@ -24,7 +24,7 @@ local function debugQuest(questId)
         or "設定值（撿取＋走路）", ngp)
     if m.xpFromClient then out("任務經驗取自遊戲（日誌中的任務一律用遊戲的數值）") end
     if m.dungeonFromTag then out("副本任務：依遊戲的任務類型判定") end
-    if res.prereqZone then out("副本前置：區域 %d（第 %d 環）", res.prereqZone, res.prereqDepth or 0) end
+    if res.prereqZone then out("副本前置：區域 %d（後續第 %d 個任務）", res.prereqZone, res.prereqDepth or 0) end
     if res.noData then out("%s：%s", res.unrated and L.UNRATED or L.NO_DATA, table.concat(res.reasons or {}, "、")); return end
     if m.map then out("主要地點：地圖 %s  %.1f, %.1f", tostring(m.map[1]), m.map[2] or 0, m.map[3] or 0) end
     local est = res.est
@@ -79,7 +79,7 @@ local function debugQuest(questId)
     end
     if est.dungeon then
         out("路程：副本固定來回 %.0f 秒（%s）", est.Troute or 0, (m.ready or est.mode == "after") and "只剩回程" or "一輪")
-        if est.plan then out("路線外的目標（副本外或副本內路線外，共用這趟）%.0f 秒、經驗 %.0f", est.plan.outT or 0, est.plan.outX or 0) end
+        if est.plan then out("路線外的目標（副本外或副本內路線外，共用這次）%.0f 秒、經驗 %.0f", est.plan.outT or 0, est.plan.outX or 0) end
     else
         local open = est.solve == "out" or est.solve == "outonly"
         out("路程：%s，共 %.0f 碼", #legs > 0 and table.concat(legs, " → ") or "-", (open and m.openYards or m.routeYards) or 0)
@@ -106,8 +106,8 @@ local function debugQuest(questId)
             f2(res.cuts[1]), f2(res.cuts[2]), f2(res.cuts[3]), f2(res.cuts[4]))
     end
     if res.chainSteps then
-        out("系列：後續 %d 環 (%s)  R系列=%s%s", res.chainSteps, table.concat(res.chainIds or {}, ","), f2(res.Rchain),
-            res.Rchain and res.R and res.Rchain > res.R and "（採用）" or "（不採用，低於單一任務）")
+        out("任務鏈：後續 %d 個 (%s)、前置 %d 個 (%s)  R鏈=%s  後續加分 %s", res.chainSteps, table.concat(res.chainIds or {}, ","),
+            #(res.chainBack or {}), table.concat(res.chainBack or {}, ","), f2(res.Rchain), tostring(res.followBonus or 0))
     end
     local g = res.gear
     if g then out("獎勵裝備：%s  物品=%s  OneForAll=%s %s%%  加成=%s%s", g.noOneForAll and "未安裝 OneForAll" or "OneForAll",

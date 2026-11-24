@@ -130,11 +130,12 @@ function UI.FillRating(tt, questId)
                 tt:AddLine(string.format(L.TT_EFFICIENCY, res.R or 0), 0.62, 0.62, 0.62)
             end
         end
-        if res.chainSteps and res.Rchain and res.Rchain > (res.R or 0) then
+        if res.Rchain then
+            local n = (res.chainSteps or 0) + #(res.chainBack or {}) + 1
             if res.median then
-                tt:AddLine(string.format(L.TT_CHAIN_MEDIAN, res.chainSteps, res.Rchain / res.median), 0.62, 0.62, 0.62)
+                tt:AddLine(string.format(L.TT_CHAIN_AVG, n, res.Rchain / res.median), 0.62, 0.62, 0.62)
             else
-                tt:AddLine(string.format(L.TT_CHAIN, res.chainSteps, res.Rchain), 0.62, 0.62, 0.62)
+                tt:AddLine(string.format(L.TT_CHAIN_AVG_B, n, res.Rchain), 0.62, 0.62, 0.62)
             end
         end
         local g = res.gear
@@ -484,6 +485,52 @@ local function underTitle(title)
     end
 end
 
+-- A follow-up quest offered right after a turn-in (user 2026-11-23, screenshot): the offer page came up with
+-- an empty title, description and objectives. No addon writes those texts (audit of every addon 2026-11-23);
+-- QuestInfo_Display fills them from GetTitleText / GetQuestText / GetObjectiveText at QUEST_DETAIL, and on the
+-- Forever client those can still be empty in the event's call stack (QuestieTrace re-samples them for the same
+-- reason). So after an offer page is drawn we look again for 3 s: when the page shows an empty title or
+-- description and the client now has them, the page is drawn again the way Blizzard draws it on QUEST_DETAIL
+-- (QuestFrameDetailPanel Hide + Show), at most once per page. A page drawn with its text is left alone.
+local redrawnFor
+local function drawnEmpty()
+    local t = _G.QuestInfoTitleHeader and QuestInfoTitleHeader:GetText() or ""
+    local d = _G.QuestInfoDescriptionText and QuestInfoDescriptionText:GetText() or ""
+    return t == "" or d == ""
+end
+local function scheduleOfferRedraw(id0)
+    local panel = _G.QuestFrameDetailPanel
+    if not (panel and C_Timer and GetTitleText and GetQuestText) then return end
+    local tries = 0
+    local function try()
+        tries = tries + 1
+        if not panel:IsShown() or not drawnEmpty() then return end -- closed, or drawn with its text
+        local id = GetQuestID and GetQuestID() or 0
+        local ready = (GetTitleText() or "") ~= "" and (GetQuestText() or "") ~= "" and id ~= 0
+        if not ready then
+            if tries < 15 then C_Timer.After(0.2, try) end
+            return
+        end
+        if redrawnFor == id then return end -- already redrawn once for this page
+        redrawnFor = id
+        panel:Hide()
+        panel:Show()
+    end
+    C_Timer.After(0.2, try)
+end
+QR.RegisterReady(function()
+    local f = CreateFrame("Frame")
+    pcall(f.RegisterEvent, f, "QUEST_FINISHED") -- the quest window closed: the next page is a new one
+    f:SetScript("OnEvent", function() redrawnFor = nil end)
+end)
+local function checkOfferPage(template)
+    if template ~= _G.QUEST_TEMPLATE_DETAIL then return end
+    local id = GetQuestID and GetQuestID() or 0
+    if redrawnFor and redrawnFor == id and id ~= 0 then return end -- our own redraw (or already done)
+    redrawnFor = nil
+    if drawnEmpty() then scheduleOfferRedraw(id) end
+end
+
 local function showOfferRating(template, parentFrame)
     if not parentFrame then return end
     local questId, logPage = pageQuest(template)
@@ -602,6 +649,8 @@ QR.RegisterReady(function()
         hooksecurefunc("QuestInfo_Display", function(template, parentFrame)
             local ok, err = pcall(showOfferRating, template, parentFrame)
             if not ok then warnOnce("quest offer window", err) end
+            ok, err = pcall(checkOfferPage, template)
+            if not ok then warnOnce("quest offer redraw", err) end
         end)
     else
         warnOnce("QuestInfo_Display", "missing")

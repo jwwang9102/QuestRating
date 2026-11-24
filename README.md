@@ -35,7 +35,10 @@ What goes into the estimate:
   reputation gains get nothing;
 - holiday quests are rated but left out of the standards;
 - quests that give no XP are not rated below max level (shown as 不評) and are left out of the standards;
-- follow-up quests in the chain and reward upgrades (with OneForAll).
+- a quest in a chain (next in chain or offered right after; not a breadcrumb or an opener of three or
+  more quests; into dungeons too) is ranked by its whole chain; at a choice of two each branch is its own
+  route, the quests before it take the better one; quests you have done are left out; a follow-up with an
+  upgrade reward (with OneForAll) or a key quest adds its bonus;
 
 Data reliability: drop rates come from Classic emulator data and may differ from the real game, and
 per-member drops in a group are unknown.
