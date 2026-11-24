@@ -45,13 +45,14 @@ per-member drops in a group are unknown.
 
 Recommendations:
 
-- dungeons: one run's kill XP plus the dungeon quests you can do in it, per hour including a fixed
-  10-minute trip, ranked against same-level open-world quests. The level range is the game's dungeon
+- dungeons: one run's kill XP plus the dungeon quests you can do in it, per hour of the run itself (the
+  trip there is not counted), ranked against same-level open-world quests. The level range is the game's dungeon
   finder range; outside it the dungeon is shown as not recommended. Shown in OneForAll's dungeon map
   pin tooltips (needs OneForAll) and listed by `/qr dungeons`;
-- maps: the XP per hour of the open-world quests you can take on a zone map, grouped into hubs (quests
-  share the route inside a hub; a tour between hubs; a fixed 10-minute trip, not counted for the map you are
-  on, so few or scattered quests score lower), ranked against the other maps that fit your level. Maps more than 4 levels above you or
+- maps: the XP of one hour of the open-world quests you can take on a zone map (quests without XP left
+  out), grouped into hubs (quests share the route inside a hub plus a walk between them; a
+  tour between hubs; the trip to the map is not counted). Scattered quests take longer; a map with less than an
+  hour of quests gives only their XP. Ranked against the other maps that fit your level. Maps more than 4 levels above you or
   without XP are not rated. Shown on the world map under OneForAll's zone level, and after the level
   when hovering a zone on a continent map.
 

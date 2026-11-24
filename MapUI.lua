@@ -53,7 +53,7 @@ local function updateZoneText()
     local id = WorldMapFrame:IsShown() and WorldMapFrame:GetMapID()
     local r = id and isZoneMap(id) and zoneRating(id)
     if r then
-        zoneText:SetText(string.format(L.MAP_REC_DETAIL, word(r.level), r.quests, r.good))
+        zoneText:SetText(string.format(L.MAP_REC_DETAIL, word(r.level), r.quests, r.good, r.minutes or 0))
         zoneFrame:Show()
     else
         zoneFrame:Hide()

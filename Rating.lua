@@ -904,14 +904,16 @@ function rateWing(key)
     return res
 end
 
--- A map at your level (user 2026-11-23; not compared with grinding): the XP per hour of doing its open-world
--- quests you can take now, in hubs (a map with two hubs of many quests each is not "scattered"): the quests'
+-- A map at your level (user 2026-11-23; not compared with grinding): the XP of one hour of its open-world
+-- quests you can take now (only quests without XP left out), in hubs (a map with two hubs of many quests each is not "scattered"): the quests'
 -- main points grouped into hubs by greedy disc cover at nearbyRadius (each hub at most 2 x radius across); inside a hub the quests share their own routes
--- (divided by min(nearbyCap, quests in the hub)); between hubs one tour (nearest neighbour over the hub centres)
--- plus one fixed trip to the map (QR_GEN.zoneTravel: few quests spread it over little XP; none when you are
--- already on the map, user 2026-11-23, so staying is compared with going elsewhere). Ranked among the
+-- (divided by min(nearbyCap, quests in the hub)) plus a walk between their main points; between hubs one tour
+-- (nearest neighbour over the hub centres)
+-- (the trip to the map is not counted, user 2026-11-24). Score: the XP of one hour of questing there
+-- (QR_GEN.zoneSession): a map with less than an hour of quests gives only their XP. Ranked among the
 -- maps that fit your level (QR_GEN.zdist, built offline the same way). A map fits when its quest levels
--- (QR_GEN.zlv, 20-80 %) are at most 4 above you and not all grey. Returns { level, xph, quests, good, hubs }
+-- (QR_GEN.zlv, 20-80 %) are at most 4 above you and not all grey. Returns { level, score, xph, quests, good,
+-- hubs, minutes (to do them all) }
 -- or nil (max level, the map does not fit, no standard, nothing to take). Mirror of the build's map_plan / ZDIST.
 -- the zone map you are on: the first zone map up the parents of where you stand (a cave, a building, a dock or
 -- any other sub-map counts as its zone; user 2026-11-23: on Darkshore the map rating fell from "very high" to "very
@@ -975,6 +977,7 @@ function QR.RateZone(uiMap)
         if rec and rec.c and not rec.cl and rec.ho ~= 1 and openHere(id, 0) then -- no class / holiday quests
             local res = QR.RateCached(id)
             local m = res and res.model
+            -- only quests without XP are left out; a slow quest is not (user 2026-11-24)
             if m and not res.noData and not m.noXP then
                 local est = E.Quest(m, pl, cfg, 0) -- alone, its own route unshared
                 if est.T > 0 then
@@ -1018,14 +1021,31 @@ function QR.RateZone(uiMap)
     end
     local here = playerZoneMap() == uiMap
     local xp, T, centres = 0, here and 0 or (QR_GEN.zoneTravel or 0), {} -- the trip there is not counted (user 2026-11-24)
+    -- nearest-neighbour tour from the first point (user 2026-11-24: the distance between quests counts)
+    local function tour(pts)
+        local s, cur, rest = 0, pts[1], {}
+        for k = 2, #pts do rest[#rest + 1] = pts[k] end
+        while #rest > 0 do
+            local bi, bd
+            for k, c in ipairs(rest) do
+                local d = E.Dist(cur, c) or math.huge
+                if not bd or d < bd then bi, bd = k, d end
+            end
+            if bd and bd < math.huge then s = s + E.LegTime(bd, cfg, pl) end
+            cur = table.remove(rest, bi)
+        end
+        return s
+    end
     for _, g in ipairs(hubs) do
         local share = math.min(cfg.nearbyCap, #g)
-        local sx, sy = 0, 0
+        local sx, sy, pts = 0, 0, {}
         for _, k in ipairs(g) do
             local it = items[k]
             xp, T = xp + it.xp, T + it.t - it.route + it.route / share
             sx, sy = sx + it.p.x, sy + it.p.y
+            pts[#pts + 1] = it.p
         end
+        T = T + tour(pts) -- the walk between the hub's quests
         centres[#centres + 1] = { inst = items[g[1]].p.inst, x = sx / #g, y = sy / #g }
     end
     -- tour over the hub centres: nearest neighbour from the biggest hub
@@ -1040,7 +1060,10 @@ function QR.RateZone(uiMap)
         if bd and bd < math.huge then T = T + E.LegTime(bd, cfg, pl) end
         cur = table.remove(rest, bi)
     end
-    local xph = xp / T * 3600
-    return { level = E.Level(E.Position(xph, { thresholds = cuts }), 0), xph = xph, quests = #items, good = good,
-             hubs = #hubs, here = here }
+    -- the XP of one hour of questing here (QR_GEN.zoneSession; user 2026-11-24: quest density counts): a map
+    -- whose quests run out sooner gives only their XP (mirror of the build's ZONE_SESSION)
+    local S = QR_GEN.zoneSession or 3600
+    local score = xp * math.min(1, S / T) / S * 3600
+    return { level = E.Level(E.Position(score, { thresholds = cuts }), 0), xph = xp / T * 3600, score = score,
+             quests = #items, good = good, hubs = #hubs, here = here, minutes = math.max(1, math.floor(T / 60 + 0.5)) }
 end
