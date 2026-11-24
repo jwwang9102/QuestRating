@@ -335,7 +335,6 @@ local function buildReasons(res, model, est, cfg)
             or L.REASON_DUNGEON_PREREQ_NONAME)
     end
     if res.atMax then add(L.REASON_MAX_BASE) end
-    if model.noXP and not res.atMax then add(L.REASON_NO_XP) end
     -- bonus sources are always named
     if res.gearText then add(res.gearText) end
     if res.gear and res.gear.loading then add(L.REASON_GEAR_LOADING) end
@@ -417,6 +416,19 @@ function QR.Rate(questId)
     if not model.dungeon then
         local zone, depth = dungeonAhead(questId, cfg)
         if zone then res.prereqZone, res.prereqDepth = zone, depth end
+    end
+    -- gives no XP: not rated below max level and not in the standard (user 2026-11-22 / 11-23); an
+    -- attunement or a new skill is still the best rating, at max level XP is not rated anyway
+    if model.noXP and res.playerLevel < maxLevel() then
+        local rec = D.Record(questId)
+        if not (rec and rec.kq == "t") then
+            res.noData, res.unrated = true, true
+            res.reasons = { L.REASON_UNRATED_NO_XP }
+            if rec and rec.kq == "k" then
+                table.insert(res.reasons, 1, string.format(L.REASON_KEY_PLUS, L.KEY_KIND[rec.kw] or ""))
+            end
+            return res
+        end
     end
     if model.noData or #model.missing > 0 then
         -- not estimable: say what is missing instead of rating on a guess

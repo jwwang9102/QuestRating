@@ -25,7 +25,7 @@ local function debugQuest(questId)
     if m.xpFromClient then out("任務經驗取自遊戲（日誌中的任務一律用遊戲的數值）") end
     if m.dungeonFromTag then out("副本任務：依遊戲的任務類型判定") end
     if res.prereqZone then out("副本前置：區域 %d（第 %d 環）", res.prereqZone, res.prereqDepth or 0) end
-    if res.noData then out("%s：%s", L.NO_DATA, table.concat(res.reasons or {}, "、")); return end
+    if res.noData then out("%s：%s", res.unrated and L.UNRATED or L.NO_DATA, table.concat(res.reasons or {}, "、")); return end
     if m.map then out("主要地點：地圖 %s  %.1f, %.1f", tostring(m.map[1]), m.map[2] or 0, m.map[3] or 0) end
     local est = res.est
     if not est then -- rated without an estimate (attunement, max level): its reasons only

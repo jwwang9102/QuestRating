@@ -449,7 +449,7 @@ function D.BuildModel(questId)
         end
     end
     if model.questXP <= 0 and pl < ((GetMaxPlayerLevel and GetMaxPlayerLevel()) or 60) then
-        -- known to give no XP: rated with quest XP 0 (reason "no XP"); otherwise the XP is unknown
+        -- known to give no XP: not rated below max level (Rating.lua, shown as 不評); otherwise the XP is unknown
         if rec.x0 then model.noXP = true else miss(L.MISSING_XP) end
     end
     return model

@@ -34,6 +34,7 @@ What goes into the estimate:
   per group), a new reputation or a new system (camping, riding) gives +2 levels. Plain turn-ins and
   reputation gains get nothing;
 - holiday quests are rated but left out of the standards;
+- quests that give no XP are not rated below max level (shown as 不評) and are left out of the standards;
 - follow-up quests in the chain and reward upgrades (with OneForAll).
 
 Data reliability: drop rates come from Classic emulator data and may differ from the real game, and

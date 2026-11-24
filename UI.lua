@@ -44,15 +44,16 @@ function UI.TagParts(questId)
     local res = QR.RateCached(questId)
     if not res then return nil end
     if res.noData then
-        -- "【資料不足｜經驗不明】": what is missing, as many as the tracker shows reasons
-        local text = L.NO_DATA
+        -- "【資料不足｜經驗不明】": what is missing, as many as the tracker shows reasons ("不評": no XP)
+        local word = res.unrated and L.UNRATED or L.NO_DATA
+        local text = word
         local n = math.min(QR.Cfg().trackerReasons or 0, #(res.reasons or {}))
         if n > 0 and res.reasons[1] ~= L.NO_DATA then
             local parts = {}
             for i = 1, n do parts[i] = res.reasons[i] end
             text = text .. "｜" .. table.concat(parts, "·")
         end
-        return colorize("【" .. L.NO_DATA .. "】", GRAY), colorize("【" .. text .. "】", GRAY), colorize("◆", GRAY)
+        return colorize("【" .. word .. "】", GRAY), colorize("【" .. text .. "】", GRAY), colorize("◆", GRAY)
     end
     local color = COLOR[res.level] or GRAY
     local word = L.RATING[res.level]
@@ -84,7 +85,7 @@ local function followUpLine(questId)
     if not res then
         tag = colorize("【" .. L.NO_DATA .. "】", GRAY)
     elseif res.noData then
-        local text = L.NO_DATA
+        local text = res.unrated and L.UNRATED or L.NO_DATA
         if res.reasons and res.reasons[1] and res.reasons[1] ~= L.NO_DATA then
             text = text .. "｜" .. table.concat(res.reasons, "·")
         end
@@ -124,7 +125,7 @@ function UI.FillRating(tt, questId)
         return
     end
     if res.noData then
-        tt:AddLine(L.NO_DATA, 0.62, 0.62, 0.62)
+        tt:AddLine(res.unrated and L.UNRATED or L.NO_DATA, 0.62, 0.62, 0.62)
         for _, r in ipairs(res.reasons or {}) do
             if r ~= L.NO_DATA then tt:AddLine(r, 1, 1, 1, true) end
         end
@@ -441,6 +442,7 @@ local function offerSummary(questId, width, fs, dark, allReasons)
     if res and not res.noData then
         word, color, reasons = L.RATING[res.level], COLOR[res.level] or GRAY, res.reasons or {}
     elseif res then
+        if res.unrated then word = L.UNRATED end
         for _, r in ipairs(res.reasons or {}) do
             if r ~= L.NO_DATA then reasons[#reasons + 1] = r end
         end
