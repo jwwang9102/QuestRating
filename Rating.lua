@@ -48,10 +48,11 @@ local completed, inLogQuest, openToYou -- below
 -- Other quests near this one (database rec.nb: main point within the build's nearbyRadius, 300 yd) that you
 -- can do along: taken or takeable now, not done, not exclusive with this one (user 2026-11-23: quests not
 -- taken share the route too). Mirror of the build's nearby_count.
-local function countNearby(model, cfg)
+-- pl: the level the quest is done at (a follow-up in a chain: its own level), default yours
+local function countNearby(model, cfg, pl)
     local rec = D.Record(model.id)
     if not model.center or not rec or not rec.nb then return 0, {} end
-    local pl = UnitLevel("player") or 1
+    pl = pl or UnitLevel("player") or 1
     local exclusive = {}
     for _, x in ipairs(rec.ex or {}) do exclusive[x] = true end
     local list = {}
@@ -205,7 +206,7 @@ end
 -- A dungeon quest (user 2026-11-23). What is left all doable outside (no objective inside the run left): an
 -- ordinary quest, its own route shared the usual way with nearby quests and with the run's other quests still to
 -- do (solve "outonly"). Else the run, or, when every objective can be done outside too, the better of the run and
--- the open world (solve "in" / "out"). withNearby false: no route sharing (a follow-up in a chain). Returns est,
+-- the open world (solve "in" / "out"). withNearby false: no route sharing. Returns est,
 -- nearby count, list. Mirror of the build's rate_dungeon.
 local function rateDungeonQuest(model, pl, cfg, withNearby)
     local comps = runCompanions(model, pl, cfg)
@@ -214,7 +215,7 @@ local function rateDungeonQuest(model, pl, cfg, withNearby)
         if not om then return nil end
         local n, list = 0, {}
         if withNearby then
-            n, list = countNearby(model, cfg)
+            n, list = countNearby(model, cfg, pl)
             n = n + runSiblings(model, pl)
         end
         local o = E.Quest(om, pl, cfg, n)
@@ -235,13 +236,14 @@ local function rateDungeonQuest(model, pl, cfg, withNearby)
     return est, 0, {}
 end
 
--- One quest on its own at player level `lv` (no route sharing, no chain, no bonus); nil when it
--- cannot be estimated. The model's quest XP is scaled for the real player level, so it is
--- re-scaled for `lv` here.
+-- A follow-up in a chain at player level `lv` (no chain, no bonus), with route sharing like every quest of
+-- the standard (user 2026-11-23: unshared follow-ups made whole chains look half as good as the quests they
+-- are ranked against); nil when it cannot be estimated. The model's quest XP is scaled for the real player
+-- level, so it is re-scaled for `lv` here.
 local function soloEstimate(questId, lv, cfg)
     local m = getModel(questId)
     if not m or m.noData or (m.dungeon and not m.run) or #m.missing > 0 then return nil end
-    local est = m.run and rateDungeonQuest(m, lv, cfg, false) or E.Quest(m, lv, cfg, 0)
+    local est = m.run and rateDungeonQuest(m, lv, cfg, true) or E.Quest(m, lv, cfg, (countNearby(m, cfg, lv)))
     if est.T <= 0 then return nil end
     -- at your own level a logged quest keeps the client's live XP (review 2026-11-23)
     if not (lv == (UnitLevel("player") or 1) and m.xpFromClient) then
@@ -255,11 +257,14 @@ end
 -- divided by the grinding baseline of that level, so a level-50 quest in a level-30 chain counts
 -- as "hours of grinding saved at 50", not as huge XP at 30. At each step the follow-up with the
 -- best normalised XP per second (an exclusive choice takes the better branch), x chainDecay^i,
--- plus the walk from the previous turn-in. Stops at a quest that cannot be estimated.
--- Returns grinding hours saved (H), total seconds, steps, { ids }; R of the chain = H * 3600 / T.
+-- plus the walk from the previous turn-in, each follow-up with its usual route sharing. Stops at a quest
+-- that cannot be estimated. You can stop anywhere in a chain, so the chain counts up to its best step (the
+-- most efficient leading part; user 2026-11-23: weak or long later steps must not drag down the start).
+-- Returns grinding hours saved (H), total seconds, steps, { ids } of that part; R of the chain = H * 3600 / T.
 local function chainEstimate(questId, est0, pl, cfg, B0)
     local seen = { [questId] = true }
-    local H, T, steps, ids = est0.XP / B0, est0.T, 0, {}
+    local H, T, ids = est0.XP / B0, est0.T, {}
+    local bestH, bestT, bestSteps = H, T, 0
     local cur = questId
     local top = ((GetMaxPlayerLevel and GetMaxPlayerLevel()) or 60) - 1 -- quest XP is 0 at max level
     for i = 1, cfg.chainDepth do
@@ -283,10 +288,12 @@ local function chainEstimate(questId, est0, pl, cfg, B0)
         if not best then break end
         H = H + best.h * cfg.chainDecay ^ i
         T = T + best.T + best.gapT
-        steps, cur = i, best.id
+        cur = best.id
         ids[#ids + 1] = best.id
+        if bestSteps == 0 or H / T > bestH / bestT then bestH, bestT, bestSteps = H, T, i end
     end
-    return H, T, steps, ids
+    for k = #ids, bestSteps + 1, -1 do ids[k] = nil end
+    return bestH, bestT, bestSteps, ids
 end
 
 local function buildReasons(res, model, est, cfg)

@@ -140,7 +140,7 @@ function D.DropRate(itemID, npcID)
 end
 
 -- A dungeon quest done in the open world (user 2026-11-23): objectives of the run at their camp outside dungeons
--- (obj.out = { S, A, d, respawn, presence, altPer }), the others as they are, route = model.openLegs. For
+-- (obj.out = { S, A, d, respawn, presence, altPer, campWalk }), the others as they are, route = model.openLegs. For
 -- E.Quest; nil without an open-world route.
 function D.OpenModel(model, cfg)
     if not model.openLegs then return nil end
@@ -155,7 +155,8 @@ function D.OpenModel(model, cfg)
             if not out then return nil end
             -- the outside camp's own values (false = none there, not the inside camp's)
             o = setmetatable({ S = out[1], A = out[2], d = out[3], rs = out[4] or false, presence = out[5] or false,
-                               altPer = out[6] or false, synthetic = out[1] < cfg.minSpawns }, { __index = obj })
+                               altPer = out[6] or false, campWalk = out[7] or false,
+                               synthetic = out[1] < cfg.minSpawns }, { __index = obj })
         end
         m.objectives[#m.objectives + 1] = o
         local g = byGroup[obj.group or obj.index]
@@ -301,7 +302,7 @@ function D.BuildModel(questId)
             index = i, kind = KIND[o.k] or "event", fromObject = o.k == 4, N = o.n, countSource = o.cs,
             p = o.p, pUnknown = o.pu == 1, S = o.S, A = o.A, d = o.d, mobLevel = o.lv, rank = RANK[o.r] or "normal",
             synthetic = o.sy == 1, src = o.src, center = point(o.c), group = o.g, item = o.i, rs = o.rs,
-            dRoute = o.dr or 0, dDetour = o.dd or 0, dWing = o.dw, dMult = o.dm, out = o.ox, levelUnknown = o.lu == 1, multiDrop = o.md == 1, altPer = o.ap, presence = o.pr, offRoute = o.di == 1,
+            dRoute = o.dr or 0, dDetour = o.dd or 0, dWing = o.dw, dMult = o.dm, out = o.ox, levelUnknown = o.lu == 1, multiDrop = o.md == 1, altPer = o.ap, presence = o.pr, campWalk = o.cw, offRoute = o.di == 1,
         }
         local lo = liveFor(i, o.n)
         obj.liveMatched = lo ~= nil

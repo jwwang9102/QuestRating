@@ -157,7 +157,9 @@ function E.Objective(obj, playerLevel, cfg, party)
                 * (party and GROUP_RATE[party.n] / party.n or 1)
         end
     end
-    r.T = r.K * r.tKill + r.wait + (r.altT or 0)
+    -- the walk between camps merged offline (walking to targets up at the next camp beats waiting), once
+    local cw = (not (obj.synthetic or not obj.S) and obj.campWalk) or 0
+    r.T = r.K * r.tKill + r.wait + (r.altT or 0) + (cw > 0 and E.LegTime(cw, cfg, playerLevel) or 0)
     return r
 end
 
@@ -326,7 +328,7 @@ function E.DungeonPlan(model, playerLevel, cfg, noRoute, shared)
             local o = e.obj.out
             local r = E.Objective({ kind = e.obj.kind, fromObject = e.obj.fromObject, N = e.rest / (e.obj.dMult or 1),
                 p = e.obj.p, S = o[1], A = o[2], d = o[3], synthetic = o[1] < cfg.minSpawns,
-                rs = o[4], presence = o[5], altPer = o[6],
+                rs = o[4], presence = o[5], altPer = o[6], campWalk = o[7] or nil,
                 mobLevel = e.obj.mobLevel, rank = e.obj.rank }, playerLevel, cfg)
             T2, X2 = T2 + r.T, X2 + r.xp
         end
