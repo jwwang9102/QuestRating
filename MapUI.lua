@@ -179,6 +179,19 @@ local function addDungeonLines(tt)
             tt:AddLine(string.format(L.DUNGEON_REC_DETAIL, r.xph, r.medianXph or 0), 0.8, 0.8, 0.8)
         end
         if (r.quests or 0) > 0 then tt:AddLine(string.format(L.DUNGEON_REC_QUESTS, r.quests), 0.8, 0.8, 0.8) end
+        if r.need and #r.need > 0 then
+            -- the quests to take for this rating (a prerequisite not done yet: marked), and the rating without them
+            tt:AddLine(L.DUNGEON_NEED_TITLE, 0.8, 0.8, 0.8)
+            for i, c in ipairs(r.need) do
+                if i > 8 then tt:AddLine(string.format(L.DUNGEON_NEED_MORE, #r.need - 8), 0.6, 0.6, 0.6); break end
+                local rec = QR.Data.Record(c.id)
+                local title = (C_QuestLog and C_QuestLog.GetTitleForQuestID and C_QuestLog.GetTitleForQuestID(c.id))
+                    or (rec and rec.t) or tostring(c.id)
+                tt:AddLine("    " .. title .. (c.open and "" or L.DUNGEON_NEED_PRE), 0.8, 0.8, 0.8)
+            end
+            if r.levelTaken ~= r.level then tt:AddLine(string.format(L.DUNGEON_WITHOUT, word(r.levelTaken)), 0.8, 0.8, 0.8) end
+        end
+        if not r.noData and not r.outside and QR_GEN.wing[it.key] and QR_GEN.wing[it.key].e then tt:AddLine(L.DUNGEON_REC_EST, 0.8, 0.8, 0.8) end
         if not r.outside and r.lo and r.lo > 0 then
             local fmt = r.finder == "list" and L.DUNGEON_REC_LEVEL_LIST or (r.finder and L.DUNGEON_REC_LEVEL or L.DUNGEON_REC_LEVEL_ROUTE)
             tt:AddLine(string.format(fmt, r.lo, r.hi), 0.8, 0.8, 0.8)
@@ -202,7 +215,9 @@ function M.ListDungeons()
     if #list == 0 then DEFAULT_CHAT_FRAME:AddMessage(L.DUNGEON_LIST_NONE) end
     for _, it in ipairs(list) do
         DEFAULT_CHAT_FRAME:AddMessage(string.format(L.DUNGEON_LIST_LINE, QR.Data.WingName(it.key), word(it.r.level),
-            it.r.xph, math.floor(it.r.T / 60 + 0.5), it.r.quests))
+            it.r.xph, math.floor(it.r.T / 60 + 0.5), it.r.quests) .. (it.w.e and L.DUNGEON_EST_TAG or "")
+            .. ((it.r.need and #it.r.need > 0 and it.r.levelTaken ~= it.r.level)
+                and string.format(L.DUNGEON_LIST_WITHOUT, #it.r.need, word(it.r.levelTaken)) or ""))
     end
     local pl = UnitLevel("player") or 1
     for key in pairs(QR.NoDataWings()) do

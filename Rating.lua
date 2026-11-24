@@ -141,8 +141,35 @@ function openToYou(id, rec, pl)
     end
     return true
 end
-local function runCompanions(model, pl, cfg)
+-- all: every quest of the dungeon this character can still do at pl (not done, race / class, min level, not grey),
+-- also ones not taken yet or whose prerequisites are not done (user 2026-11-24, the dungeon recommendation:
+-- "count them all"); else only quests open to you now.
+local function runCompanions(model, pl, cfg, all)
     local out = {}
+    local inList = {}
+    local wl = model.run and model.run.wings[1] and QR_GEN.wingQuests and QR_GEN.wingQuests[model.run.wings[1]]
+    for _, x in ipairs(wl or {}) do inList[x] = true end
+    -- an earlier step that needs this run too (mirror of the build's WING_SET: quests with something inside)
+    local function needsRun(p)
+        if not inList[p] or completed(p) then return false end
+        local pm = getModel(p)
+        return pm and not pm.fail and pm.anyIn and true or false
+    end
+    local function canDo(id, rec)
+        if not all then return openToYou(id, rec, pl) end
+        if not (D.Available(rec) and not completed(id)) then return false end
+        if inLogQuest(id) then return true end
+        -- a later step of a chain in this dungeon whose earlier step needs the run too: one run cannot do both
+        for _, p in ipairs(rec.pa or {}) do if needsRun(p) then return false end end
+        if rec.p1 and #rec.p1 > 0 then
+            local met, blocked = false, false
+            for _, p in ipairs(rec.p1) do
+                if completed(p) then met = true elseif needsRun(p) then blocked = true end
+            end
+            if blocked and not met then return false end
+        end
+        return inLogQuest(id) or ((rec.ml or 0) <= pl and (rec.lv or 0) > E.GrayLevel(pl))
+    end
     local wing = model.run and model.run.wings[1]
     local list = wing and QR_GEN.wingQuests and QR_GEN.wingQuests[wing]
     if not list or model.ready then return out end
@@ -159,7 +186,7 @@ local function runCompanions(model, pl, cfg)
     end
     for _, id in ipairs(list) do
         local rec = D.Record(id)
-        if not taken[id] and rec and not excluded(rec, id) and openToYou(id, rec, pl) then
+        if not taken[id] and rec and not excluded(rec, id) and canDo(id, rec) then
             local other = getModel(id)
             if other and other.run and other.insideLeft and not other.offRoute and not other.noData
                 and #other.missing == 0 then -- something to do in the run, with data
@@ -171,7 +198,8 @@ local function runCompanions(model, pl, cfg)
                 -- only at your own level)
                 local qxp = (other.xpFromClient and pl == (UnitLevel("player") or 1)) and other.questXP
                     or D.QuestXP(rec, pl)
-                out[#out + 1] = { id = id, xp = frac * (qxp or 0), t = cfg.fixedTime }
+                out[#out + 1] = { id = id, xp = frac * (qxp or 0), t = cfg.fixedTime, taken = inLogQuest(id),
+                                  open = openToYou(id, rec, pl) }
             end
         end
     end
@@ -850,17 +878,29 @@ function rateWing(key)
     local cfg = QR.CfgFor(pl)
     local run = { wings = { key }, T = w.t, n = w.n or 0, kills = { w.k }, shares = { w.s }, inner = w.s }
     local xp = E.RunXP(run, pl, cfg.partyMax)
-    local T = w.t + ((QR_GEN.dungeonTravel) or 600)
-    local comps = runCompanions({ id = 0, run = run }, pl, cfg)
-    for _, c in ipairs(comps) do xp, T = xp + c.xp, T + c.t end
-    local res = { quests = #comps, atMax = pl >= maxLevel(), key = key, T = T, lo = lo, hi = hi, finder = finder }
-    res.xph = T > 0 and xp / T * 3600 or 0
+    local T = w.t + ((QR_GEN.dungeonTravel) or 0) -- the run itself (travel not counted, user 2026-11-24)
+    local comps = runCompanions({ id = 0, run = run }, pl, cfg, true) -- every dungeon quest you can still do
+    -- also the run with only the quests already in your log (user 2026-11-24: which quests to take, and the
+    -- rating without them)
+    local xp0, T0 = xp, T
+    local need = {}
+    for _, c in ipairs(comps) do
+        xp, T = xp + c.xp, T + c.t
+        if c.taken then xp0, T0 = xp0 + c.xp, T0 + c.t elseif c.xp > 0 then need[#need + 1] = c
+        else xp0, T0 = xp0 + c.xp, T0 + c.t end -- (a quest the run gives no part of: not one to take for it)
+    end
+    local res = { quests = #comps, atMax = pl >= maxLevel(), key = key, T = T, lo = lo, hi = hi, finder = finder,
+                  need = need }
     local B = E.Baseline(pl, cfg)
-    res.R = B > 0 and res.xph / B or 0
     local cuts, median = D.LevelDist(pl, cfg)
+    local function level(x, t)
+        local xph = t > 0 and x / t * 3600 or 0
+        local R = B > 0 and xph / B or 0
+        return E.Level(res.atMax and 2.0 or E.Position(R, cuts and { thresholds = cuts } or cfg), 0), xph, R
+    end
+    res.level, res.xph, res.R = level(xp, T)
+    res.levelTaken, res.xphTaken = level(xp0, T0)
     res.medianXph = median and median * B or nil
-    local pos = res.atMax and 2.0 or E.Position(res.R, cuts and { thresholds = cuts } or cfg)
-    res.level = E.Level(pos, 0)
     return res
 end
 
@@ -868,7 +908,7 @@ end
 -- quests you can take now, in hubs (a map with two hubs of many quests each is not "scattered"): the quests'
 -- main points grouped into hubs by greedy disc cover at nearbyRadius (each hub at most 2 x radius across); inside a hub the quests share their own routes
 -- (divided by min(nearbyCap, quests in the hub)); between hubs one tour (nearest neighbour over the hub centres)
--- plus one fixed trip to the map (QR_GEN.dungeonTravel: few quests spread it over little XP; none when you are
+-- plus one fixed trip to the map (QR_GEN.zoneTravel: few quests spread it over little XP; none when you are
 -- already on the map, user 2026-11-23, so staying is compared with going elsewhere). Ranked among the
 -- maps that fit your level (QR_GEN.zdist, built offline the same way). A map fits when its quest levels
 -- (QR_GEN.zlv, 20-80 %) are at most 4 above you and not all grey. Returns { level, xph, quests, good, hubs }
@@ -977,7 +1017,7 @@ function QR.RateZone(uiMap)
         hubs[#hubs + 1] = g
     end
     local here = playerZoneMap() == uiMap
-    local xp, T, centres = 0, here and 0 or (QR_GEN.dungeonTravel or 600), {}
+    local xp, T, centres = 0, here and 0 or (QR_GEN.zoneTravel or 0), {} -- the trip there is not counted (user 2026-11-24)
     for _, g in ipairs(hubs) do
         local share = math.min(cfg.nearbyCap, #g)
         local sx, sy = 0, 0

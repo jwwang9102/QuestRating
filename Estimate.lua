@@ -245,7 +245,7 @@ function E.RunXP(run, playerLevel, partyMax)
 end
 
 local function travelTime()
-    return (QR_GEN and QR_GEN.dungeonTravel) or 600
+    return (QR_GEN and QR_GEN.dungeonTravel) or 0 -- not counted (user 2026-11-24: only the run itself)
 end
 
 local function chance(obj, cfg)

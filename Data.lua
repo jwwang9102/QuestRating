@@ -388,6 +388,10 @@ function D.BuildModel(questId)
             model.anyIn = true
             if not model.ready then model.insideLeft = true end
         end
+        if rec.ai == 1 then -- something to do inside that the objective data does not show (build: INSIDE_ACTION)
+            model.anyIn = true
+            if not model.ready then model.insideLeft = true end
+        end
         if rec.at == 1 then -- taken inside: ahead only while it is not taken
             model.anyIn = true
             if not model.inLog then model.insideLeft = true end
@@ -410,8 +414,8 @@ function D.BuildModel(questId)
     if not model.ready then
         for i, o in ipairs(rec.o or {}) do
             local obj = model.objectives[i]
-            if o.k and o.k >= 1 and o.k <= 4 and not o.c and (o.S or 0) == 0 and not o.dw and obj and (obj.N or 0) > 0 then
-                miss(L.MISSING_SOURCE) -- kill / drop / object target with no source anywhere (build: same rule)
+            if o.k and o.k >= 1 and o.k <= 4 and not o.c and (o.S or 0) == 0 and not o.dw and o.di ~= 1 and obj and (obj.N or 0) > 0 then
+                miss(L.MISSING_SOURCE) -- kill / drop / object target with no source anywhere, not inside a run (build: same rule)
             end
             if o.k == 5 and obj and (obj.N or 0) > 0 then
                 if o.s == "u" then
@@ -444,7 +448,7 @@ function D.BuildModel(questId)
         end
         if #(rec.o or {}) == 0 then
             local walk = 0
-            for _, lg in ipairs(rec.legs or {}) do if lg[1]:sub(1, 1) ~= "B" then walk = walk + lg[2] end end
+            for _, lg in ipairs(rec.legs or rec.ol or {}) do if lg[1]:sub(1, 1) ~= "B" then walk = walk + lg[2] end end
             -- not in the server DB and turned in where it was taken: an empty objective list means
             -- "unknown" (reputation, crafting ...); a walk to another NPC is a delivery
             if rec.fv and walk <= 0 and not (live and #live > 0) then miss(L.MISSING_OBJECTIVE) end
