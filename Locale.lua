@@ -60,7 +60,9 @@ QR.L = {
     DUNGEON_REC_QUESTS = "  可順便解 %d 個副本任務",
     DUNGEON_REC_MAX = "  滿級：不看經驗效率",
     DUNGEON_OUTSIDE = "不推薦（等級範圍 %d-%d）",
+    DUNGEON_NO_DATA = "資料不足（缺怪物資料）",
     DUNGEON_FINDER_RAW = "  尋求組隊顯示的等級：",
+    DUNGEON_FINDER_RAW_ONE = " %d-%d／建議 %d-%d",
     DUNGEON_LIST_NONE = "  （目前等級附近沒有副本）",
     DUNGEON_REC_LEVEL = "  副本等級 %d-%d（尋求組隊）",
     DUNGEON_REC_LEVEL_ROUTE = "  副本等級 %d-%d（依怪物等級，無尋求組隊資料）",
@@ -97,7 +99,8 @@ QR.L = {
         BRD = "黑石深淵", LBRS = "黑石塔下層",
         UBRS = "黑石塔上層", ["DM-East"] = "厄運之槌東", ["DM-West"] = "厄運之槌西",
         ["DM-North"] = "厄運之槌北", ["Strat-Live"] = "斯坦索姆血色區", ["Strat-UD"] = "斯坦索姆亡靈區",
-        Scholo = "通靈學院",
+        Scholo = "通靈學院", Thanes = "族長之廳", Lordaeron = "羅德隆廢墟", Excavation = "挖掘場：濕地",
+        Dalaran = "達拉然城",
     },
 
     -- route legs (debug)

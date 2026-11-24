@@ -126,7 +126,9 @@ local function wingsOf(d)
     else -- WoW Forever's new dungeons have no instance ID in OneForAll
         local n = d.name or ""
         if n:find("Thanes") and wings.Thanes then out[1] = "Thanes"
-        elseif n:find("Lordaeron") and wings.Lordaeron then out[1] = "Lordaeron" end
+        elseif n:find("Lordaeron") and wings.Lordaeron then out[1] = "Lordaeron"
+        elseif n:find("Excavation") then out[1] = "Excavation"
+        elseif n:find("Dalaran") then out[1] = "Dalaran" end
     end
     table.sort(out)
     return out
@@ -159,23 +161,25 @@ local function addDungeonLines(tt)
     if #lines == 0 then return end
     adding = true
     for _, it in ipairs(lines) do
-        local r, w = it.r, QR_GEN.wing[it.key]
+        local r = it.r
         local name = (#lines > 1 or #e.list > 1) and ("  " .. QR.Data.WingName(it.key)) or ""
-        if r.outside then
+        if r.noData then
+            tt:AddLine(string.format(L.DUNGEON_REC, QR.UI.colorize(L.DUNGEON_NO_DATA, QR.UI.GRAY)) .. name, 1, 1, 1)
+        elseif r.outside then
             tt:AddLine(string.format(L.DUNGEON_REC, QR.UI.colorize(string.format(L.DUNGEON_OUTSIDE, r.lo, r.hi), QR.UI.GRAY))
                 .. name, 1, 1, 1)
         else
             tt:AddLine(string.format(L.DUNGEON_REC, word(r.level)) .. name, 1, 1, 1)
         end
-        if r.outside then
-            -- the range is in the line above
+        if r.outside or r.noData then
+            -- the range is in the line above, or nothing to rate
         elseif r.atMax then
             tt:AddLine(L.DUNGEON_REC_MAX, 0.8, 0.8, 0.8)
         else
             tt:AddLine(string.format(L.DUNGEON_REC_DETAIL, r.xph, r.medianXph or 0), 0.8, 0.8, 0.8)
         end
         if (r.quests or 0) > 0 then tt:AddLine(string.format(L.DUNGEON_REC_QUESTS, r.quests), 0.8, 0.8, 0.8) end
-        if not r.outside and r.lo then
+        if not r.outside and r.lo and r.lo > 0 then
             tt:AddLine(string.format(r.finder and L.DUNGEON_REC_LEVEL or L.DUNGEON_REC_LEVEL_ROUTE, r.lo, r.hi), 0.8, 0.8, 0.8)
         end
     end
@@ -199,11 +203,25 @@ function M.ListDungeons()
         DEFAULT_CHAT_FRAME:AddMessage(string.format(L.DUNGEON_LIST_LINE, QR.Data.WingName(it.key), word(it.r.level),
             it.r.xph, math.floor(it.r.T / 60 + 0.5), it.r.quests))
     end
-    -- the finder's raw ranges (checked in game: are they the finder's own numbers?)
+    local pl = UnitLevel("player") or 1
+    for key in pairs(QR.NO_DATA_WINGS) do
+        if not (QR_GEN.wing and QR_GEN.wing[key]) then -- (once a route exists it is rated above)
+            local lo, hi = QR.WingRange(key)
+            if not lo or (pl >= lo and pl <= hi) then
+                DEFAULT_CHAT_FRAME:AddMessage("  " .. QR.Data.WingName(key) .. "  " .. L.DUNGEON_NO_DATA)
+            end
+        end
+    end
+    -- the finder's raw values (min-max, recommended min-max), to check in game
     local raw = {}
-    for key in pairs(QR_GEN and QR_GEN.wing or {}) do
+    local keys = {}
+    for key in pairs(QR_GEN and QR_GEN.wing or {}) do keys[#keys + 1] = key end
+    for key in pairs(QR.NO_DATA_WINGS) do
+        if not (QR_GEN.wing and QR_GEN.wing[key]) then keys[#keys + 1] = key end
+    end
+    for _, key in ipairs(keys) do
         local r = QR.WingFinderRaw(key)
-        raw[#raw + 1] = key .. (r and string.format(" %d-%d", r[1], r[2]) or " -")
+        raw[#raw + 1] = key .. (r and string.format(L.DUNGEON_FINDER_RAW_ONE, r[1], r[2], r[3], r[4]) or " -")
     end
     table.sort(raw)
     DEFAULT_CHAT_FRAME:AddMessage(L.DUNGEON_FINDER_RAW .. table.concat(raw, ", "))
