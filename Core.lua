@@ -37,7 +37,7 @@ QR.DEFAULTS = {
     gearLevelOffset = 5,    -- quest gear for level L has item level about L + this (gear standard above your level)
     -- display
     showTracker = true,     -- rating tag after quest titles in Questie's tracker
-    trackerReasons = 2,     -- reasons in the tag: 0 none, 1, 2
+    trackerReasons = 0,     -- reasons in the tag: 0 none (default: they are in the hover tooltip), 1, 2
     showTooltip = true,     -- QuestRating tooltip when hovering a tracker line
     showDropRate = true,    -- drop % on objective lines of unit tooltips
     questLogExtraWidth = 120, -- pixels added to the world map's quest log (0 = Blizzard's width)
@@ -78,6 +78,11 @@ local function initDB()
     if QuestRatingDB.version < 4 then
         p.shareFactor = nil
         QuestRatingDB.version = 4
+    end
+    -- settings version 5: tracker tags show the rating only (reasons overflowed the tracker, user 2026-11-23)
+    if QuestRatingDB.version < 5 then
+        p.trackerReasons = nil
+        QuestRatingDB.version = 5
     end
     QR.db = QuestRatingDB
     QR.FillDefaults()

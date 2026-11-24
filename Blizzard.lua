@@ -13,7 +13,7 @@ QR.Blizzard = B
 
 local issecret = _G.issecretvalue or function() return false end
 
--- One FontString of ours per Blizzard row: rating word (+ reasons when there is room), placed right
+-- One FontString of ours per Blizzard row (row.qrTag: a field on Blizzard's row frame): rating word (+ reasons when there is room), placed right
 -- after the row's own text on its last line.
 local function placeTag(row, textFS, questId, withReasons)
     if not row or not textFS then return end
@@ -28,7 +28,10 @@ local function placeTag(row, textFS, questId, withReasons)
     tagFS:ClearAllPoints()
     -- room: from where the title starts to the row's right edge, or to the first other text of the row
     -- on the right (e.g. the quest type "（地城）" in the quest log), whichever comes first
+    -- the visible text column: never past the title's own box (a tracker block can be wider than it shows)
     local left, right = textFS:GetLeft(), row:GetRight()
+    local tr = textFS:GetRight()
+    if right and tr and tr > (left or 0) + 40 then right = math.min(right, tr) end
     if left and right then
         for _, region in ipairs({ row:GetRegions() }) do
             if region ~= textFS and region ~= tagFS and region.GetObjectType and region:GetObjectType() == "FontString"
@@ -89,6 +92,29 @@ local function guard(key, fn, ...)
     end
 end
 
+-- hovering a tracker block's quest title: the QuestRating tooltip (rating and reasons; user 2026-11-23)
+local hoverHooked = setmetatable({}, { __mode = "k" }) -- blocks hooked (a local table, not a field on them)
+local function trackerHover(self, block)
+    if not QR.Cfg().showTooltip then return end
+    local id = block.id
+    if issecret(id) or type(id) ~= "number" or not D.Record(id) then return end
+    if not GameTooltip:IsOwned(self) then GameTooltip:SetOwner(self, "ANCHOR_LEFT") else GameTooltip:AddLine(" ") end
+    QR.UI.FillTooltip(GameTooltip, id)
+    GameTooltip:Show()
+end
+local function hookTrackerHover(block)
+    if hoverHooked[block] then return end
+    for _, f in ipairs({ block.HeaderButton or false, block }) do
+        if f and f.HookScript and f.HasScript and f:HasScript("OnEnter") then
+            hoverHooked[block] = true -- the first frame that takes the mouse; never a second one
+            f:HookScript("OnEnter", function(self) guard("tracker tooltip", trackerHover, self, block) end)
+            f:HookScript("OnLeave", function(self) if GameTooltip:IsOwned(self) then GameTooltip:Hide() end end)
+            return
+        end
+    end
+end
+
+
 ---------------------------------------------------------------------------------------------
 -- Objective tracker
 ---------------------------------------------------------------------------------------------
@@ -101,6 +127,7 @@ local function decorateTracker(tracker)
         if cfg.showTracker and D.Record(id) then
             -- one block failing (e.g. secret values) must not stop the others
             if not pcall(placeTag, block, block.HeaderText, id, (cfg.trackerReasons or 0) > 0) then hideTag(block) end
+            pcall(hookTrackerHover, block)
         else
             hideTag(block)
         end
@@ -115,6 +142,7 @@ local function decorateModule(module)
         if issecret(id) or type(id) ~= "number" or not block.HeaderText then return end
         if cfg.showTracker and D.Record(id) and block:IsShown() then
             if not pcall(placeTag, block, block.HeaderText, id, (cfg.trackerReasons or 0) > 0) then hideTag(block) end
+            pcall(hookTrackerHover, block)
         else
             hideTag(block)
         end

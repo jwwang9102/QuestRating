@@ -100,8 +100,7 @@ local function debugQuest(questId)
     end
     out("經驗：任務 %d%s + 殺怪 %.0f = %.0f", m.questXP or 0,
         (est.otherXP or 0) > 0 and string.format(" + 同輪任務 %d", est.otherXP) or "", est.mobXP, est.XP)
-    out("E=%.0f/小時  B=%.0f/小時  R=%s%s", res.E, res.B, f2(res.R),
-        res.Ralone and string.format("（不分攤 R=%s）", f2(res.Ralone)) or "")
+    out("E=%.0f/小時  B=%.0f/小時  R=%s", res.E, res.B, f2(res.R))
     if res.cuts then
         out("標準：%s  門檻 R=%s / %s / %s / %s", res.median and string.format("同等級中位數 R=%s", f2(res.median)) or "固定門檻",
             f2(res.cuts[1]), f2(res.cuts[2]), f2(res.cuts[3]), f2(res.cuts[4]))
@@ -160,6 +159,11 @@ SlashCmdList.QUESTRATING = function(msg)
         if not id then QR.Print(L.MSG_BAD_ID); return end
         local ok, err = pcall(debugQuest, id)
         if not ok then QR.Print("debug error: %s", tostring(err)) end
+    elseif cmd == "dungeons" then
+        if QR.disabled then QR.Print(L.MSG_DISABLED, "-"); return end
+        if not QR.ready then QR.Print(L.MSG_NOT_READY); return end
+        local ok, err = pcall(QR.MapUI.ListDungeons)
+        if not ok then QR.Print("dungeons error: %s", tostring(err)) end
     elseif cmd == "drop" then
         -- what the last Questie map icon tooltip did with drop rates
         if not QR.mapDropHooked then QR.Print("drop: Questie map tooltip hook not installed"); return end

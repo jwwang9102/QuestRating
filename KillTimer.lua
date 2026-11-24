@@ -81,14 +81,23 @@ QR.RegisterReady(function()
     local lastEnd -- end of the previous solo fight, while a gap can still be measured
     local lastLevel
     local ev = CreateFrame("Frame")
-    for _, e in ipairs({ "PLAYER_REGEN_DISABLED", "PLAYER_REGEN_ENABLED", "PLAYER_DEAD", "PLAYER_CONTROL_LOST",
-        "PLAYER_LEVEL_UP", "GROUP_ROSTER_UPDATE", "PLAYER_ENTERING_WORLD" }) do
+    -- Kills: the WoW Forever client forbids registering COMBAT_LOG_EVENT_UNFILTERED (blocked-action dialog,
+    -- which pcall does not prevent; taint log 2026-11-23, and OneForAll / QLens note the same), so on clients
+    -- with secret values a kill is the "you gain experience" message (CHAT_MSG_COMBAT_XP_GAIN: your or your
+    -- pet's kill that gives XP) while a solo fight runs; elsewhere the combat log. Every event is registered
+    -- here, once, at login.
+    local useCombatLog = not _G.issecretvalue
+    local events = { "PLAYER_REGEN_DISABLED", "PLAYER_REGEN_ENABLED", "PLAYER_DEAD", "PLAYER_CONTROL_LOST",
+        "PLAYER_LEVEL_UP", "GROUP_ROSTER_UPDATE", "PLAYER_ENTERING_WORLD",
+        useCombatLog and "COMBAT_LOG_EVENT_UNFILTERED" or "CHAT_MSG_COMBAT_XP_GAIN" }
+    for _, e in ipairs(events) do
         pcall(ev.RegisterEvent, ev, e)
     end
     local function killWeight(guid)
-        -- the killed mob's level and rank when it is your target, else a same-level normal mob
+        -- the killed mob's level and rank when it is your (dead) target, else a same-level normal mob
         local cfg = QR.Cfg()
-        if UnitGUID("target") ~= guid then return 1 end
+        if guid and UnitGUID("target") ~= guid then return 1 end
+        if not guid and not (UnitIsDead and UnitIsDead("target")) then return 1 end
         local pl, ml = UnitLevel("player") or 1, UnitLevel("target") or -1
         if ml < 0 then ml = pl + 3 end
         local f = math.min(cfg.fightMaxFactor, math.max(cfg.fightMinFactor, 1 + cfg.fightPerLevel * (ml - pl)))
@@ -111,19 +120,31 @@ QR.RegisterReady(function()
             fight = { start = now, weight = 0, kills = 0, level = level,
                       gap = (lastEnd and lastLevel == level) and (now - lastEnd) or nil }
             lastEnd = nil
-            self:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
         elseif event == "COMBAT_LOG_EVENT_UNFILTERED" then
             if not fight then return end
             local _, sub, _, src, _, _, _, dest = CombatLogGetCurrentEventInfo()
             if sub == "PARTY_KILL" and (src == UnitGUID("player") or src == UnitGUID("pet")) then
                 fight.weight, fight.kills = fight.weight + killWeight(dest), fight.kills + 1
             end
+        elseif event == "CHAT_MSG_COMBAT_XP_GAIN" then
+            if not fight then return end
+            fight.weight, fight.kills = fight.weight + killWeight(nil), fight.kills + 1
         elseif event == "PLAYER_REGEN_ENABLED" then
-            self:UnregisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
+            -- the last kill's XP message can come right after combat ends: close the fight a moment later
+            if not useCombatLog and fight and not fight.closing then
+                local closing = fight
+                closing.closing, closing.endT = true, GetTime()
+                C_Timer.After(0.5, function()
+                    if fight == closing then self:GetScript("OnEvent")(self, "QR_FIGHT_END") end -- not a new fight
+                end)
+                return
+            end
+        end
+        if event == "PLAYER_REGEN_ENABLED" or event == "QR_FIGHT_END" then
             local f = fight
             fight = nil
             if not f or f.kills <= 0 or UnitIsDeadOrGhost("player") or (IsInGroup and IsInGroup()) then return end
-            local now = GetTime()
+            local now = f.endT or GetTime() -- the end of combat, not the delayed close
             local t = now - f.start
             if t <= 0 or t > MAX_FIGHT or UnitLevel("player") ~= f.level then return end
             local s = store()
@@ -133,7 +154,8 @@ QR.RegisterReady(function()
             if f.gap and f.gap > 0 then add(d.g, f.gap / f.kills) end
             lastEnd, lastLevel = now, f.level
             if QR.InvalidateRatings then QR.InvalidateRatings() end
-        else
+        elseif event ~= "PLAYER_REGEN_DISABLED" and event ~= "COMBAT_LOG_EVENT_UNFILTERED"
+            and event ~= "CHAT_MSG_COMBAT_XP_GAIN" then
             -- death, taxi / loss of control, level-up, group change, loading screen: no gap across it
             lastEnd = nil
         end

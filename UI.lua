@@ -17,6 +17,7 @@ local COLOR = { [0] = "ff9d9d9d", [1] = "ffffffff", [2] = "ffffd100", [3] = "ff1
 local GRAY = "ff9d9d9d"
 
 local function colorize(text, color) return "|c" .. color .. text .. "|r" end
+UI.COLOR, UI.GRAY, UI.colorize = COLOR, GRAY, colorize
 
 -- Same rules as Questie's drop-rate text.
 local function dropText(rate)
@@ -170,7 +171,16 @@ end
 -- Redraw Questie's tracker (rating changed without a quest log event, e.g. gear or settings).
 -- Questie's Update does nothing in combat or before the tracker started: try again after combat.
 local refreshPending, refreshAfterCombat = false, false
-local combatFrame
+-- the after-combat redraw: its event is registered once at load, never in combat (this client blocks
+-- RegisterEvent / UnregisterEvent of some events in combat, taint log 2026-11-23)
+local combatFrame = CreateFrame("Frame")
+combatFrame:SetScript("OnEvent", function()
+    if refreshAfterCombat then
+        refreshAfterCombat = false
+        UI.Refresh()
+    end
+end)
+pcall(combatFrame.RegisterEvent, combatFrame, "PLAYER_REGEN_ENABLED")
 function UI.Refresh()
     if QR.Blizzard and QR.Blizzard.Refresh then pcall(QR.Blizzard.Refresh) end
     local tracker = questie.tracker
@@ -179,18 +189,7 @@ function UI.Refresh()
     C_Timer.After(0.2, function()
         refreshPending = false
         if InCombatLockdown() then
-            if not combatFrame then
-                combatFrame = CreateFrame("Frame")
-                combatFrame:SetScript("OnEvent", function(self)
-                    self:UnregisterEvent("PLAYER_REGEN_ENABLED")
-                    refreshAfterCombat = false
-                    UI.Refresh()
-                end)
-            end
-            if not refreshAfterCombat then
-                refreshAfterCombat = true
-                combatFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
-            end
+            refreshAfterCombat = true -- redrawn when combat ends
             return
         end
         local ok, err = pcall(tracker.Update, tracker)
@@ -436,7 +435,7 @@ local PARCHMENT = { ["ffffffff"] = "ff202020", ["ff9d9d9d"] = "ff5a5a5a", ["ffff
                     ["ff1eff00"] = "ff006400", ["ffff8000"] = "ffa04000" }
 
 local offerLine -- button holding the summary text; .questId is the quest it shows
-local function offerSummary(questId, width, fs, dark)
+local function offerSummary(questId, width, fs, dark, allReasons)
     local res = QR.RateCached(questId)
     local word, color, reasons = L.NO_DATA, GRAY, {}
     if res and not res.noData then
@@ -456,6 +455,7 @@ local function offerSummary(questId, width, fs, dark)
         end
         return L.TT_TITLE .. "：" .. colorize("【" .. text .. "】", color)
     end
+    if allReasons then fs:SetText(build(#reasons)); return end -- quest log pages: every reason, wrapped
     for n = #reasons, 1, -1 do
         fs:SetText(build(n))
         if fs:GetUnboundedStringWidth() <= width then return end
@@ -463,17 +463,50 @@ local function offerSummary(questId, width, fs, dark)
     fs:SetText(build(0))
 end
 
+-- the quest a QuestInfo page shows: the NPC's offer (QUEST_TEMPLATE_DETAIL) or the quest log's details
+-- (classic QuestLogFrame QUEST_TEMPLATE_LOG, world map QUEST_TEMPLATE_MAP_DETAILS; user 2026-11-23)
+local function pageQuest(template)
+    if template == _G.QUEST_TEMPLATE_DETAIL then return GetQuestID and GetQuestID(), false end
+    if template ~= _G.QUEST_TEMPLATE_LOG and template ~= _G.QUEST_TEMPLATE_MAP_DETAILS then return nil end
+    local id
+    if template == _G.QUEST_TEMPLATE_MAP_DETAILS then
+        id = _G.QuestMapFrame and QuestMapFrame.DetailsFrame and QuestMapFrame.DetailsFrame.questID
+    end
+    if (type(id) ~= "number" or id <= 0) and C_QuestLog and C_QuestLog.GetSelectedQuest then id = C_QuestLog.GetSelectedQuest() end
+    if (type(id) ~= "number" or id <= 0) and GetQuestLogSelection and GetQuestLogTitle then
+        local idx = GetQuestLogSelection()
+        if idx and idx > 0 then id = select(8, GetQuestLogTitle(idx)) end
+    end
+    return id, true
+end
+
+-- the shown QuestInfo element anchored right under the title (the objectives on log pages, the description on
+-- the NPC offer page), with its first anchor
+local QUEST_INFO_ELEMENTS = { "QuestInfoObjectivesText", "QuestInfoDescriptionText", "QuestInfoDescriptionHeader",
+    "QuestInfoObjectivesHeader", "QuestInfoRewardText", "QuestInfoRequiredMoneyText", "QuestInfoGroupSize",
+    "QuestInfoAnchor", "QuestInfoSpacerFrame" }
+local function underTitle(title)
+    for _, name in ipairs(QUEST_INFO_ELEMENTS) do
+        local f = _G[name]
+        if f and f.GetPoint and f:IsShown() then
+            local point, rel, relPoint, x, y = f:GetPoint(1)
+            if rel == title then return f, point, relPoint, x, y end
+        end
+    end
+end
+
 local function showOfferRating(template, parentFrame)
-    if template ~= _G.QUEST_TEMPLATE_DETAIL or not parentFrame then return end
+    if not parentFrame then return end
+    local questId, logPage = pageQuest(template)
+    if questId == nil and not logPage then return end
     local desc, title = _G.QuestInfoDescriptionText, _G.QuestInfoTitleHeader
     if not (desc and title) then return end
-    local questId = GetQuestID and GetQuestID()
+    local below, bPoint, bRelPoint, bx, by = underTitle(title)
     if not offerLine then
         offerLine = CreateFrame("Button", nil, parentFrame)
         local fs = offerLine:CreateFontString(nil, "ARTWORK", "QuestFont")
         fs:SetPoint("TOPLEFT")
         fs:SetJustifyH("LEFT")
-        fs:SetWordWrap(false)
         offerLine.text = fs
         offerLine:SetScript("OnEnter", function(self)
             if not self.questId then return end
@@ -496,15 +529,19 @@ local function showOfferRating(template, parentFrame)
     local fs = offerLine.text
     fs:SetTextColor(tr or 0, tg or 0, tb or 0)
     local width = template.contentWidth or desc:GetWidth()
-    offerSummary(questId, width, fs, dark)
+    fs:SetWordWrap(logPage and true or false)
+    fs:SetWidth(width)
+    offerSummary(questId, width, fs, dark, logPage)
     offerLine.questId = questId
     offerLine:SetParent(parentFrame)
     offerLine:SetSize(math.min(width, fs:GetUnboundedStringWidth() + 2), math.max(12, fs:GetStringHeight() or 12))
     offerLine:ClearAllPoints()
     offerLine:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -6)
     offerLine:Show()
-    desc:ClearAllPoints()
-    desc:SetPoint("TOPLEFT", offerLine, "BOTTOMLEFT", 0, -8)
+    if below then -- the element that was under the title goes under our line, with its own offsets
+        below:ClearAllPoints()
+        below:SetPoint(bPoint or "TOPLEFT", offerLine, bRelPoint or "BOTTOMLEFT", bx or 0, by or -8)
+    end
     if GameTooltip:GetOwner() == offerLine then offerLine:GetScript("OnEnter")(offerLine) end
 end
 

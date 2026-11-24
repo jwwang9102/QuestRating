@@ -29,15 +29,31 @@ What goes into the estimate:
   makes it a dungeon quest. Objectives in several dungeons are not estimated;
 - at max level XP efficiency is not rated: base 中 plus the reward and key-quest bonus (also for quests
   whose time cannot be estimated);
-- key quests: an attunement every member needs (Onyxia's Drakefire Amulet chain) is rated best; a
-  dungeon key (one per group), a new reputation or a new system (camping) gives +2 levels;
+- key quests: an attunement every member needs (Onyxia's Drakefire Amulet chain) and a quest that
+  teaches a new skill (class spells, profession ranks; not recipes) are rated best; a dungeon key (one
+  per group), a new reputation or a new system (camping, riding) gives +2 levels. Plain turn-ins and
+  reputation gains get nothing;
+- holiday quests are rated but left out of the standards;
 - follow-up quests in the chain and reward upgrades (with OneForAll).
 
 Data reliability: drop rates come from Classic emulator data and may differ from the real game, and
 per-member drops in a group are unknown.
 
-Where it shows: Questie's tracker and map icon tooltips, the world map quest log, and the quest offer
-window. Questie and OneForAll are optional.
+Recommendations:
+
+- dungeons: one run's kill XP plus the dungeon quests you can do in it, per hour including a fixed
+  10-minute trip, ranked against same-level open-world quests. The level range is the game's dungeon
+  finder range; outside it the dungeon is shown as not recommended. Shown in OneForAll's dungeon map
+  pin tooltips (needs OneForAll) and listed by `/qr dungeons`;
+- maps: the XP per hour of the open-world quests you can take on a zone map, grouped into hubs (quests
+  share the route inside a hub; a tour between hubs; a fixed 10-minute trip, not counted for the map you are
+  on, so few or scattered quests score lower), ranked against the other maps that fit your level. Maps more than 4 levels above you or
+  without XP are not rated. Shown on the world map under OneForAll's zone level, and after the level
+  when hovering a zone on a continent map.
+
+Where it shows: Questie's tracker (the rating only; hover the quest title for the reasons) and map icon
+tooltips, the world map quest log, the quest offer window, and the quest log and map quest detail pages
+(rating and every reason under the title). Questie and OneForAll are optional.
 
 ## Install
 
@@ -48,6 +64,7 @@ Copy or clone this folder into `World of Warcraft/_forever_/Interface/AddOns/Que
 - `/qr` opens the settings.
 - `/qr log` lists the rating of every quest in your log.
 - `/qr debug <questID>` prints each step of the calculation.
+- `/qr dungeons` lists the dungeon recommendations and the dungeon finder's level ranges.
 
 ## Data and license
 

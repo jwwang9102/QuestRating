@@ -16,6 +16,7 @@ Data.lua
 Gear.lua
 Rating.lua
 UI.lua
+MapUI.lua
 Blizzard.lua
 Options.lua
 Debug.lua

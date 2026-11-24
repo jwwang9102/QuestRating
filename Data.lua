@@ -98,6 +98,23 @@ end
 
 function D.Record(questId) return GEN and GEN[questId] end
 
+-- Open-world quests whose main point is on a uiMap (map recommendation), built once.
+local byMap
+function D.MapQuests(uiMap)
+    if not byMap then
+        byMap = {}
+        for id, rec in pairs(GEN or {}) do
+            local m = rec.m and rec.m[1]
+            if m and rec.dg ~= 1 then
+                byMap[m] = byMap[m] or {}
+                table.insert(byMap[m], id)
+            end
+        end
+        for _, list in pairs(byMap) do table.sort(list) end
+    end
+    return byMap[uiMap] or {}
+end
+
 -- Race / class masks (Questie style, bit n-1 = race or class ID n, 0 = everyone). The masks can carry
 -- bits above 32, so plain arithmetic instead of the 32-bit bit library.
 local function hasBit(mask, id)
