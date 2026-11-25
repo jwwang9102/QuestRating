@@ -51,7 +51,8 @@ per-member drops in a group are unknown.
 Recommendations:
 
 - dungeons: one run's kill XP plus the dungeon quests you can do in it, per hour of the run itself (the
-  trip there is not counted), ranked against same-level open-world quests. The level range is the game's dungeon
+  trip there is not counted; dungeon kill XP 60 %), ranked against the XP per hour of the maps that fit your
+  level (as in the map recommendation). The level range is the game's dungeon
   finder range; outside it the dungeon is shown as not recommended. Shown in OneForAll's dungeon map
   pin tooltips (needs OneForAll) and listed by `/qr dungeons`;
 - maps: the open-world quests you can take on a zone map (quests without XP or with almost none left

@@ -858,8 +858,10 @@ end)
 ---------------------------------------------------------------------------------------------
 -- A dungeon wing at your level: one normal run's kill XP + the quests of that run you can do now (each by the
 -- part the route finishes, as in a dungeon quest's estimate) over the run time + the fixed travel + their talk
--- time. Ranked like a quest among the same-level open-world quests (QR_GEN.dist): "high" = better than most
--- quests of your level. Returns { level, R, xph, medianXph, quests, atMax } or nil.
+-- time. Ranked by its XP per hour among the maps that fit your level (QR_GEN.zdist, the maps' XP per hour of
+-- doing their quests with the walks between them; user 2026-11-25 "compare with the maps": a run is a whole
+-- stretch of time, like a map, not one quest without the walk to the next). Kill XP in dungeons: 60 % (user
+-- 2026-11-25). Returns { level, xph, medianXph (the maps' median), quests, atMax } or nil.
 -- The level range of a wing: the client's dungeon finder (user 2026-11-23: "the built-in dungeon finder's
 -- range; too high or too low is not recommended"). LFGDungeons IDs (server hotfix table lfg_dungeons) -> our
 -- wings; the range is the finder's recommended levels (minRecLevel / maxRecLevel). A single level is no range
@@ -963,16 +965,30 @@ function rateWing(key)
     end
     local res = { quests = #comps, atMax = pl >= maxLevel(), key = key, T = T, lo = lo, hi = hi, finder = finder,
                   need = need }
-    local B = E.Baseline(pl, cfg)
-    local cuts, median = D.LevelDist(pl, cfg)
+    local Lc = math.max(1, math.min(59, pl))
+    local cuts = QR_GEN.zdist and QR_GEN.zdist[Lc]
     local function level(x, t)
         local xph = t > 0 and x / t * 3600 or 0
-        local R = B > 0 and xph / B or 0
-        return E.Level(res.atMax and 2.0 or E.Position(R, cuts and { thresholds = cuts } or cfg), 0), xph, R
+        if res.atMax then return E.Level(2.0, 0), xph end
+        if not cuts then return nil, xph end
+        return E.Level(E.Position(xph, { thresholds = cuts }), 0), xph
     end
-    res.level, res.xph, res.R = level(xp, T)
+    res.level, res.xph = level(xp, T)
     res.levelTaken, res.xphTaken = level(xp0, T0)
-    res.medianXph = median and median * B or nil
+    res.medianXph = QR_GEN.zmed and QR_GEN.zmed[Lc] or nil
+    if res.level == nil then res.noData = true end
+    -- quests whose XP is not in the data (WoW Forever's new dungeons: Alcaz, Blackmaw, Shapers' Hall): the rating
+    -- counts only what is known; when none of them has XP data it is not rated (review 2026-11-25: they showed
+    -- a firm "very low")
+    local unknown = 0
+    for _, c in ipairs(comps) do
+        local rec = D.Record(c.id)
+        if rec and not (rec.xp and rec.xp > 0) and not rec.x0 then unknown = unknown + 1 end
+    end
+    res.xpUnknown = unknown
+    if not res.atMax and #comps > 0 and unknown == #comps then
+        res.noData, res.noDataText = true, L.DUNGEON_XP_UNKNOWN
+    end
     return res
 end
 

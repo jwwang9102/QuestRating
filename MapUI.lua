@@ -12,6 +12,7 @@ QR.MapUI = M
 
 local function word(level)
     local UI = QR.UI
+    if level == nil then return UI.colorize(L.NO_DATA, UI.GRAY) end -- no standard for the level
     return UI.colorize(L.RATING[level], UI.COLOR[level] or UI.GRAY)
 end
 
@@ -164,7 +165,7 @@ local function addDungeonLines(tt)
         local r = it.r
         local name = (#lines > 1 or #e.list > 1) and ("  " .. QR.Data.WingName(it.key)) or ""
         if r.noData then
-            tt:AddLine(string.format(L.DUNGEON_REC, QR.UI.colorize(L.DUNGEON_NO_DATA, QR.UI.GRAY)) .. name, 1, 1, 1)
+            tt:AddLine(string.format(L.DUNGEON_REC, QR.UI.colorize(r.noDataText or L.DUNGEON_NO_DATA, QR.UI.GRAY)) .. name, 1, 1, 1)
         elseif r.outside then
             tt:AddLine(string.format(L.DUNGEON_REC, QR.UI.colorize(string.format(L.DUNGEON_OUTSIDE, r.lo, r.hi), QR.UI.GRAY))
                 .. name, 1, 1, 1)
@@ -179,6 +180,9 @@ local function addDungeonLines(tt)
             tt:AddLine(string.format(L.DUNGEON_REC_DETAIL, r.xph, r.medianXph or 0), 0.8, 0.8, 0.8)
         end
         if (r.quests or 0) > 0 then tt:AddLine(string.format(L.DUNGEON_REC_QUESTS, r.quests), 0.8, 0.8, 0.8) end
+        if not r.noData and (r.xpUnknown or 0) > 0 then
+            tt:AddLine(string.format(L.DUNGEON_XP_PARTIAL, r.xpUnknown), 0.8, 0.8, 0.8)
+        end
         if r.need and #r.need > 0 then
             -- the quests to take for this rating (a prerequisite not done yet: marked), and the rating without them
             tt:AddLine(L.DUNGEON_NEED_TITLE, 0.8, 0.8, 0.8)
