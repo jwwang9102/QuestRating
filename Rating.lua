@@ -130,7 +130,7 @@ end
 function openToYou(id, rec, pl)
     if not (D.Available(rec) and not completed(id)) then return false end
     if inLogQuest(id) then return true end
-    if (rec.ml or 0) > pl or (rec.lv or 0) <= E.GrayLevel(pl) then return false end
+    if (rec.ml or 0) > pl or E.QuestGray(rec.lv, pl) then return false end
     for _, x in ipairs(rec.ex or {}) do -- an exclusive sibling done or taken
         if completed(x) or inLogQuest(x) then return false end
     end
@@ -168,7 +168,7 @@ local function runCompanions(model, pl, cfg, all)
             end
             if blocked and not met then return false end
         end
-        return inLogQuest(id) or ((rec.ml or 0) <= pl and (rec.lv or 0) > E.GrayLevel(pl))
+        return inLogQuest(id) or ((rec.ml or 0) <= pl and not E.QuestGray(rec.lv, pl))
     end
     local wing = model.run and model.run.wings[1]
     local list = wing and QR_GEN.wingQuests and QR_GEN.wingQuests[wing]
@@ -292,7 +292,8 @@ end
 local function chainCost(questId, f, pl, cfg, top, forward)
     local rec, frec = D.Record(questId), D.Record(f)
     if not (rec and frec and D.Available(frec)) then return nil end
-    local lv = forward and math.min(top, math.max(pl, frec.lv or pl)) or math.max(1, math.min(pl, frec.lv or pl))
+    local flv = (frec.lv or 0) > 0 and frec.lv or pl -- level -1 / 0 follows yours
+    local lv = forward and math.min(top, math.max(pl, flv)) or math.max(1, math.min(pl, flv))
     local est = soloEstimate(f, lv, cfg)
     local B = E.Baseline(lv, cfg)
     if not (est and B > 0) then return nil end
@@ -501,7 +502,14 @@ local function buildReasons(res, model, est, cfg)
         add(string.format(L.REASON_KEY_PLUS, L.KEY_KIND[rec and rec.kw] or ""))
     end
     if model.ready then add(L.REASON_READY) end
-    if est.party then add(string.format(L.REASON_GROUP, est.party)) end
+    if est.party then
+        add(string.format(L.REASON_GROUP, est.party))
+    else
+        -- an elite target: only the tag "group advised" (user 2026-11-24), the time is the solo estimate
+        for _, g in pairs(est.groups or {}) do
+            if g.obj and g.obj.rank == "elite" then add(L.REASON_ELITE_GROUP); break end
+        end
+    end
     -- dungeon quest: in the run or in the open world, the better one (user 2026-11-23)
     if est.solve == "outonly" then add(L.REASON_SOLVE_OUTONLY)
     elseif est.solve == "out" then add(L.REASON_SOLVE_OUT)
@@ -535,7 +543,7 @@ local function buildReasons(res, model, est, cfg)
         add(string.format(L.REASON_FOLLOW_BONUS, frec and frec.t or "?", res.followBonus))
     end
     -- a grey quest: that alone explains the rating
-    if not res.atMax and model.level and model.level <= E.GrayLevel(res.playerLevel) then
+    if not res.atMax and E.QuestGray(model.level, res.playerLevel) then
         add(L.REASON_QUEST_GRAY)
         return reasons
     end
@@ -619,6 +627,23 @@ function QR.Rate(questId)
         if not (rec and rec.kq == "t") then
             res.noData, res.unrated = true, true
             res.reasons = { L.REASON_UNRATED_NO_XP }
+            if rec and rec.kq == "k" then
+                table.insert(res.reasons, 1, string.format(L.REASON_KEY_PLUS, L.KEY_KIND[rec.kw] or ""))
+            end
+            return res
+        end
+    end
+    -- almost no XP at your level (user 2026-11-22 R017, 11-24 "find a proper threshold"): below lowXP of the
+    -- median quest XP of the quests you can take at your level (QR_GEN.xpMed; the build's low_xp); not rated
+    -- and left out of the map recommendation, like a quest without XP. A quest that opens other quests is not
+    -- (review 2026-11-24: a talk quest opening a chain or several quests is worth what it opens)
+    local med = QR_GEN and QR_GEN.xpMed and QR_GEN.xpMed[res.playerLevel]
+    if med and res.playerLevel < maxLevel() and (model.questXP or 0) > 0
+        and model.questXP < (QR_GEN.lowXP or 0.1) * med then
+        local rec = D.Record(questId)
+        if not (rec and (rec.kq == "t" or (rec.nq and #rec.nq > 0))) then -- nq: quests it opens (build: low_xp)
+            res.noData, res.unrated, res.lowXP = true, true, true
+            res.reasons = { string.format(L.REASON_UNRATED_LOW_XP, model.questXP) }
             if rec and rec.kq == "k" then
                 table.insert(res.reasons, 1, string.format(L.REASON_KEY_PLUS, L.KEY_KIND[rec.kw] or ""))
             end
@@ -730,6 +755,45 @@ function QR.FollowUps(questId)
     local ids = {}
     for _, f in ipairs(followers(questId)) do ids[#ids + 1] = f.id end
     if #ids > 0 then return ids, "next" end
+end
+
+-- A follow-up's own rating for the tooltip (user 2026-11-24, R028: show each follow-up's rating and reasons): the
+-- quest alone at your level, without its chain (the chain is already the rating of the quest you look at) and
+-- without the bonus of key quests further on; its reward bonus and its own key-quest rule kept. Returns level
+-- (or nil when it is not rated: noData / unrated), reasons, the result.
+function QR.OwnRating(questId)
+    local res = QR.RateCached(questId)
+    if not res then return nil end
+    if res.noData then return nil, res.reasons or {}, res end
+    if res.atMax or not res.R or not res.cuts then return res.level, res.reasons or {}, res end
+    local level
+    if res.keyQuest == "t" then
+        level = 4
+    else
+        -- at the level you would do it, max(your level, its level), as the chain counts it (review 2026-11-24)
+        local pl, rec = res.playerLevel, D.Record(questId)
+        local lv = math.min(59, math.max(pl, (rec and rec.lv or 0) > 0 and rec.lv or pl))
+        local R, cuts = res.R, res.cuts
+        if lv ~= pl then
+            local cfg = QR.CfgFor(lv)
+            local est, B = soloEstimate(questId, lv, cfg), E.Baseline(lv, cfg)
+            local c = D.LevelDist(lv, cfg)
+            if est and B > 0 and c then R, cuts = est.XP / est.T * 3600 / B, c end
+        end
+        local b = (res.bonus or 0) - (res.followBonus or 0) + (res.keyQuest == "k" and 2 or 0)
+        level = E.Level(E.Position(R, { thresholds = cuts }), b)
+    end
+    local skip = {}
+    if res.chainSteps or res.chainBack then
+        skip[string.format(L.REASON_CHAIN_AVG, #(res.chainBack or {}), res.chainSteps or 0)] = true
+    end
+    if res.followBonus and res.followBonus > 0 then
+        local frec = D.Record(res.followBonusId)
+        skip[string.format(L.REASON_FOLLOW_BONUS, frec and frec.t or "?", res.followBonus)] = true
+    end
+    local reasons = {}
+    for _, r in ipairs(res.reasons or {}) do if not skip[r] then reasons[#reasons + 1] = r end end
+    return level, reasons, res
 end
 
 -- Cached QR.Rate for the UI; errors become a reason instead of breaking the caller's frame.
@@ -904,21 +968,21 @@ function rateWing(key)
     return res
 end
 
--- A map at your level (user 2026-11-23; not compared with grinding): the XP of one hour of its open-world
--- quests you can take now (only quests without XP left out), in hubs (a map with two hubs of many quests each is not "scattered"): the quests'
--- main points grouped into hubs by greedy disc cover at nearbyRadius (each hub at most 2 x radius across); inside a hub the quests share their own routes
--- (divided by min(nearbyCap, quests in the hub)) plus a walk between their main points; between hubs one tour
--- (nearest neighbour over the hub centres)
--- (the trip to the map is not counted, user 2026-11-24). Score: the XP of one hour of questing there
--- (QR_GEN.zoneSession): a map with less than an hour of quests gives only their XP. Ranked among the
--- maps that fit your level (QR_GEN.zdist, built offline the same way). A map fits when its quest levels
--- (QR_GEN.zlv, 20-80 %) are at most 4 above you and not all grey. Returns { level, score, xph, quests, good,
--- hubs, minutes (to do them all) }
+-- A map at your level (user 2026-11-23; not compared with grinding): its open-world quests you can take now
+-- (quests without XP or with almost none, as rated, left out; a slow quest is not), in hubs (a map with two hubs
+-- of many quests each is not "scattered"): the quests' main points grouped into hubs by greedy disc cover at
+-- nearbyRadius (each hub at most 2 x radius across); inside a hub the quests share their own routes (divided by
+-- min(nearbyCap, quests in the hub)) plus a walk between their main points; between hubs one tour (nearest
+-- neighbour over the hub centres); the trip to the map is not counted (user 2026-11-24). Two ranks among the
+-- maps that fit your level (user 2026-11-21 "by the number of quests and their ratings", 11-24 "also
+-- concentration and distance", "no one-hour cap"): the XP per hour of doing them all (QR_GEN.zdist) and their
+-- number (QR_GEN.zcount), each 0..4; the map's position is their geometric mean. A map fits when its quest levels
+-- (QR_GEN.zlv, 20-80 %) are at most 4 above you and not all grey. Returns { level, xph, quests, good, hubs }
 -- or nil (max level, the map does not fit, no standard, nothing to take). Mirror of the build's map_plan / ZDIST.
 -- the zone map you are on: the first zone map up the parents of where you stand (a cave, a building, a dock or
 -- any other sub-map counts as its zone; user 2026-11-23: on Darkshore the map rating fell from "very high" to "very
 -- low" for a while: only micro maps were walked up, so another sub-map type, or no map during a load, read as
--- "not on this map" and added the 600 s trip, and at level 13 the bands lie within 1.5x of each other). No map
+-- "not on this map"; the trip to a map is no longer counted, the map you are on is still reported). No map
 -- for a moment (loading, a transition): the last zone seen. Inside a dungeon or on a continent: none.
 local lastZone
 local function playerZoneMap()
@@ -945,7 +1009,8 @@ function QR.RateZone(uiMap)
     local lv = QR_GEN and QR_GEN.zlv and QR_GEN.zlv[uiMap]
     if not lv or lv[1] - pl > 4 or lv[2] <= E.GrayLevel(pl) then return nil end
     local cuts = QR_GEN.zdist and QR_GEN.zdist[math.max(1, math.min(59, pl))]
-    if not cuts then return nil end
+    local ncuts = QR_GEN.zcount and QR_GEN.zcount[math.max(1, math.min(59, pl))]
+    if not (cuts and ncuts) then return nil end
     -- the standard is built at the default pace: the map's quests are estimated the same way (review 2026-11-23)
     local cfg = QR.DEFAULTS
     local list = D.MapQuests(uiMap)
@@ -958,7 +1023,7 @@ function QR.RateZone(uiMap)
         if openMemo[id] ~= nil then return openMemo[id] end
         local rec = D.Record(id)
         local ok = rec and D.Available(rec) and not completed(id) and (inLogQuest(id)
-            or ((rec.ml or 0) <= pl and (rec.lv or 0) > E.GrayLevel(pl))) and true or false
+            or ((rec.ml or 0) <= pl and not E.QuestGray(rec.lv, pl))) and true or false
         if ok and not inLogQuest(id) and depth < 8 then
             local function pre(p) return completed(p) or (onMap[p] and openHere(p, depth + 1)) end
             for _, p in ipairs(rec.pa or {}) do if not pre(p) then ok = false end end
@@ -971,19 +1036,31 @@ function QR.RateZone(uiMap)
         openMemo[id] = ok
         return ok
     end
-    local items, good = {}, 0
+    local items, good, seenKey = {}, 0, {}
+    -- two records of the same quest (WoW Forever re-adds some with a new ID: To Serve Kum'isha 2521 / 93685):
+    -- same title, level, XP, main point and objectives count once (mirror of the build's map_dup_key)
+    local function dupKey(rec)
+        local parts = {}
+        for _, o in ipairs(rec.o or {}) do parts[#parts + 1] = string.format("%d:%d:%d", o.k or 0, o.i or 0, o.n or 0) end
+        table.sort(parts)
+        local c = rec.c or {}
+        return string.format("%s|%s|%s|%.1f,%.1f,%.1f|", rec.t or "", tostring(rec.lv), tostring(rec.xp or 0),
+            c[1] or 0, c[2] or 0, c[3] or 0) .. table.concat(parts, ",")
+    end
     for _, id in ipairs(list) do
         local rec = D.Record(id)
-        if rec and rec.c and not rec.cl and rec.ho ~= 1 and openHere(id, 0) then -- no class / holiday quests
+        local key = rec and dupKey(rec)
+        if rec and rec.c and not rec.cl and rec.ho ~= 1 and not seenKey[key] and openHere(id, 0) then -- no class / holiday quests
             local res = QR.RateCached(id)
             local m = res and res.model
-            -- only quests without XP are left out; a slow quest is not (user 2026-11-24)
+            -- only quests without XP or with almost none (res.unrated) are left out; a slow quest is not (user 2026-11-24)
             if m and not res.noData and not m.noXP then
                 local est = E.Quest(m, pl, cfg, 0) -- alone, its own route unshared
                 if est.T > 0 then
-                    items[#items + 1] = { xp = est.XP, t = est.T, route = est.Troute or 0,
+                    items[#items + 1] = { xp = est.XP, t = est.T, route = est.TrouteNear or 0,
                                           p = { inst = rec.c[1], x = rec.c[2], y = rec.c[3] } }
                     if (res.level or 0) >= 3 then good = good + 1 end
+                    seenKey[key] = true
                 end
             end
         end
@@ -1020,7 +1097,7 @@ function QR.RateZone(uiMap)
         hubs[#hubs + 1] = g
     end
     local here = playerZoneMap() == uiMap
-    local xp, T, centres = 0, here and 0 or (QR_GEN.zoneTravel or 0), {} -- the trip there is not counted (user 2026-11-24)
+    local xp, T, centres = 0, 0, {} -- the trip there is not counted (user 2026-11-24)
     -- nearest-neighbour tour from the first point (user 2026-11-24: the distance between quests counts)
     local function tour(pts)
         local s, cur, rest = 0, pts[1], {}
@@ -1060,10 +1137,10 @@ function QR.RateZone(uiMap)
         if bd and bd < math.huge then T = T + E.LegTime(bd, cfg, pl) end
         cur = table.remove(rest, bi)
     end
-    -- the XP of one hour of questing here (QR_GEN.zoneSession; user 2026-11-24: quest density counts): a map
-    -- whose quests run out sooner gives only their XP (mirror of the build's ZONE_SESSION)
-    local S = QR_GEN.zoneSession or 3600
-    local score = xp * math.min(1, S / T) / S * 3600
-    return { level = E.Level(E.Position(score, { thresholds = cuts }), 0), xph = xp / T * 3600, score = score,
-             quests = #items, good = good, hubs = #hubs, here = here, minutes = math.max(1, math.floor(T / 60 + 0.5)) }
+    -- how well you level here and how much there is: the geometric mean of the two ranks, so a map weak in either
+    -- is not good (one quick quest is no map to go to; mirror of the build's ZDIST / ZCOUNT)
+    local xph = T > 0 and xp / T * 3600 or 0
+    local pos = math.sqrt(E.Position(xph, { thresholds = cuts }) * E.Position(#items, { thresholds = ncuts }))
+    return { level = E.Level(pos, 0), xph = xph, position = pos, quests = #items, good = good, hubs = #hubs,
+             here = here }
 end

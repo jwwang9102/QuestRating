@@ -74,18 +74,29 @@ function UI.Tag(questId)
     return full and (" " .. full) or ""
 end
 
--- "[25] 名稱" for one follow-up quest. No rating of its own (user 2026-11-23): before this quest is done the
--- follow-up cannot be taken, and its worth is already in this quest's rating (the whole chain); its own rating
--- shows once it can be taken.
+-- "[25] 名稱 【高｜理由·理由】" for one follow-up quest: its own rating and reasons (user 2026-11-24, R028; the
+-- quest alone at your level, QR.OwnRating: the chain is already the rating of the quest you look at).
+local FOLLOW_REASONS = 2
 local function followUpLine(questId)
     local rec = D.Record(questId)
     local title = (C_QuestLog and C_QuestLog.GetTitleForQuestID and C_QuestLog.GetTitleForQuestID(questId))
         or (rec and rec.t) or tostring(questId)
     local level = rec and rec.lv and rec.lv > 0 and string.format("[%d] ", rec.lv) or ""
-    return level .. title
+    -- a needed quest before the rest that is grey for you (another branch of the chain): its name only
+    if rec and QR.Estimate.QuestGray(rec.lv, UnitLevel("player") or 1) then return level .. title end
+    local lv, reasons, res = QR.OwnRating(questId)
+    if not res then return level .. title end
+    local word = lv and L.RATING[lv] or (res.unrated and L.UNRATED or L.NO_DATA)
+    local parts = {}
+    for _, r in ipairs(reasons or {}) do
+        if #parts >= FOLLOW_REASONS then break end
+        if r ~= L.NO_DATA then parts[#parts + 1] = r end
+    end
+    local text = #parts > 0 and (word .. "｜" .. table.concat(parts, "·")) or word
+    return level .. title .. " " .. colorize("【" .. text .. "】", lv and COLOR[lv] or GRAY)
 end
 
--- Follow-up quests: the chain the rating used, or the way to the dungeon (names only, see followUpLine).
+-- Follow-up quests: the chain the rating used, or the way to the dungeon, each with its own rating (followUpLine).
 local function addFollowUps(tt, questId)
     local ids, kind = QR.FollowUps(questId)
     if not ids then return end

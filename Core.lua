@@ -20,7 +20,7 @@ QR.DEFAULTS = {
     flightMinYards = 2000,  -- longer travel legs may use a flight path instead
     flightSpeed = 30,       -- yards per second on a flight path
     flightOverhead = 90,    -- seconds: getting to / from flight masters
-    respawn = 150,          -- seconds; only where the server data has no respawn time
+    respawn = 300,          -- seconds; only where the server data has no respawn time (QR_GEN.respawn: server median)
     shareFactor = 1.0,      -- fraction of spawns available to you (other players); 1 = not counted (user 2026-11-23)
     fixedTime = 30,         -- seconds for talking / accepting / turning in
     grindDistance = 30,     -- yards between mobs when grinding (baseline)

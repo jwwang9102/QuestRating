@@ -45,6 +45,10 @@ local function grayLevel(pl)
     return pl - floor(pl / 5) - 1
 end
 E.GrayLevel = grayLevel
+-- A grey quest at your level. Level -1 / 0 is a quest whose level follows yours (review 2026-11-24): never grey.
+function E.QuestGray(questLevel, pl)
+    return (questLevel or 0) > 0 and questLevel <= grayLevel(pl)
+end
 
 local function zeroDiff(pl)
     if pl <= 7 then return 5 end
@@ -147,7 +151,7 @@ function E.Objective(obj, playerLevel, cfg, party)
             a = obj.altPer * (E.FightTime(obj.mobLevel, playerLevel, "normal", cfg) / (party and (party.n - 1) or 1)
                 + select(2, E.GapTerms(cfg)))
         end
-        r.wait = max(0, waves - 1) * max(0, (obj.rs or cfg.respawn) - effS * (r.tKill + a))
+        r.wait = max(0, waves - 1) * max(0, (obj.rs or (QR_GEN and QR_GEN.respawn) or cfg.respawn) - effS * (r.tKill + a))
         if a > 0 and r.K > effS then
             -- other kills: altPer per target beyond the first wave, plus the others already on the points you
             -- clear first (about one point's worth, altPer x presence: exact for a single point)
@@ -197,17 +201,25 @@ function E.Quest(model, playerLevel, cfg, nearby, party)
     end
     local share = min(cfg.nearbyCap, 1 + (nearby or 0))
     res.share = share
-    local tRoute, tEscort = 0, 0
+    -- nearby quests share the walks in the area (user 2026-11-21 / 11-23, R080 "quests in the same area"); a
+    -- ship / zeppelin (its average wait + crossing) and a delivery long enough to fly (kind "d", flightMinYards: a
+    -- trip out of the area, e.g. a letter to a capital) are yours alone (review 2026-11-24: a quest 14,504 yd away
+    -- showed 3 min); walks to camps stay shared even when long (the quests of one hub go to the same far camps)
+    local tNear, tFar, tEscort = 0, 0, 0
     for _, lg in ipairs(model.routeLegs or {}) do
         if lg.escort then
             tEscort = tEscort + lg.seconds -- at the NPC's pace, not shared with nearby quests
+        elseif lg.seconds then
+            tFar = tFar + lg.seconds
+        elseif lg.kind == "d" and lg.yards >= cfg.flightMinYards then
+            tFar = tFar + E.LegTime(lg.yards, cfg, playerLevel)
         else
-            -- ship / zeppelin legs carry their time (average wait + crossing), walks their yards
-            tRoute = tRoute + (lg.seconds or E.LegTime(lg.yards, cfg, playerLevel))
+            tNear = tNear + E.LegTime(lg.yards, cfg, playerLevel)
         end
     end
-    res.TrouteAlone = tRoute
-    res.Troute = res.TrouteAlone / share
+    res.TrouteAlone = tNear + tFar
+    res.TrouteNear = tNear -- the part nearby quests share (the map's hubs share it the same way)
+    res.Troute = tNear / share + tFar
     res.Tescort = tEscort
     res.Tfixed = cfg.fixedTime -- accept + turn-in talk, also for a logged quest (user 2026-11-23)
     res.T = res.Troute + res.Tescort + res.Tfarm + res.Tfixed

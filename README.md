@@ -18,12 +18,14 @@ What goes into the estimate:
 - your own pace: your measured solo fight time and the gap between fights (recorded in game) are used
   once there are enough samples; until then a default is used;
 - shared route: nearby quests you can do along the way, including ones you have not taken yet, share
-  the trip;
+  the walks in the area; a ship or zeppelin and a delivery long enough to fly (a trip out of the area,
+  such as a letter to a capital) are not shared;
 - quests already in your log are updated by progress; accepting gives no discount;
-- group (elite) quests are rated for a party of 3-5 players;
+- group quests are rated for a party of 3-5 players; a quest with an elite target is estimated solo and
+  tagged "建議組隊";
 - dungeon quests are rated as a run: a route-based run time, shared with the other quests of the same
-  run; what one run does not finish is caught up by the most efficient option; travel is a fixed
-  10 minutes. Objectives outside the dungeon share that trip. A quest whose remaining objectives are all
+  run; what one run does not finish is caught up by the most efficient option; the trip to the dungeon
+  is not counted. A quest whose remaining objectives are all
   outside is rated as an ordinary quest; when every objective can be done inside or outside, the more
   efficient way is used and named in the reasons. Taking, an objective or turning in inside the dungeon
   makes it a dungeon quest. Objectives in several dungeons are not estimated;
@@ -34,11 +36,15 @@ What goes into the estimate:
   per group), a new reputation or a new system (camping, riding) gives +2 levels. Plain turn-ins and
   reputation gains get nothing;
 - holiday quests are rated but left out of the standards;
-- quests that give no XP are not rated below max level (shown as 不評) and are left out of the standards;
-- a quest in a chain (next in chain or offered right after; not a breadcrumb or an opener of three or
-  more quests; into dungeons too) is ranked by its whole chain; at a choice of two each branch is its own
+- quests that give no XP, or almost none at your level (less than a tenth of the median quest XP of the
+  quests you can take at your level) and open no other quest, are not rated below max level (shown as 不評) and are left out of
+  the standards and the map recommendation;
+- a quest in a chain (next in chain, offered right after, or the next quest needs it; not a breadcrumb,
+  an opener of three or more quests or a quest any one of three or more lines leads to; into dungeons too)
+  is ranked by its whole chain; at a choice of two each branch is its own
   route, the quests before it take the better one; quests you have done are left out; a follow-up with an
-  upgrade reward (with OneForAll) or a key quest adds its bonus;
+  upgrade reward (with OneForAll) or a key quest adds its bonus. The tooltip lists the follow-ups, each
+  with its own rating (the quest alone) and reasons;
 
 Data reliability: drop rates come from Classic emulator data and may differ from the real game, and
 per-member drops in a group are unknown.
@@ -49,10 +55,10 @@ Recommendations:
   trip there is not counted), ranked against same-level open-world quests. The level range is the game's dungeon
   finder range; outside it the dungeon is shown as not recommended. Shown in OneForAll's dungeon map
   pin tooltips (needs OneForAll) and listed by `/qr dungeons`;
-- maps: the XP of one hour of the open-world quests you can take on a zone map (quests without XP left
-  out), grouped into hubs (quests share the route inside a hub plus a walk between them; a
-  tour between hubs; the trip to the map is not counted). Scattered quests take longer; a map with less than an
-  hour of quests gives only their XP. Ranked against the other maps that fit your level. Maps more than 4 levels above you or
+- maps: the open-world quests you can take on a zone map (quests without XP or with almost none left
+  out), grouped into hubs (quests share the route inside a hub plus a walk between them; a tour between
+  hubs; the trip to the map is not counted). Two ranks against the other maps that fit your level, combined so that a map weak in either is not good:
+  the XP per hour of doing them all (scattered quests take longer) and how many there are. Maps more than 4 levels above you or
   without XP are not rated. Shown on the world map under OneForAll's zone level, and after the level
   when hovering a zone on a continent map.
 
