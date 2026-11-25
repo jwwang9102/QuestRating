@@ -85,6 +85,7 @@ QR.L = {
     REASON_MAX_POINTS = "金幣 %.1f·裝備 %.1f·聲望 %.1f·關鍵 %d",
     REASON_MAX_GOLD = "金幣 %.1f",
     REASON_MAX_NO_TIME = "時間無法估計：只按分數排名",
+    REASON_MAX_QUEST = "滿級任務：不看時間，只按分數和其他滿級任務比",
     REASON_MAX_REW_UNKNOWN = "獎勵資料不明（金幣、聲望）",
     REASON_GEAR_POINTS = "獎勵 %s：裝備 %.1f 分",
     REASON_KEY_TOP = "解鎖任務（每人都要做）：最推薦",

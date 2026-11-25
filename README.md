@@ -34,7 +34,8 @@ What goes into the estimate:
   pre-raid lists), reputation 0-10, key quests 20 (every member needs it) or 10 (dungeon key, new reputation
   or system), ranked against all quests; an attunement stays the best rating and a key quest further on in the
   chain adds +2, a dungeon key or new system is at least 高. Capital-city reputation counts at a quarter. A
-  quest whose time cannot be estimated is ranked on its points alone; a quest whose money and reputation are in
+  quest whose time cannot be estimated is ranked on its points alone, and a max-level quest (Tier 0.5 and the
+  like) always is, among the max-level quests; a quest whose money and reputation are in
   no source (most WoW Forever additions) is not rated unless it has gear or key points;
 - a quest left out for no or almost no XP is rated after all when it has a reward besides gold (a key quest,
   reputation, or a reward item that is an upgrade for you);

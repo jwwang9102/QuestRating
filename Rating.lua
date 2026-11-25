@@ -736,8 +736,9 @@ function QR.Rate(questId)
                 for _, m in ipairs(#model.missing > 0 and model.missing or { L.NO_DATA }) do res.reasons[#res.reasons + 1] = m end
                 return res
             end
-            if pts and M and M.ptsCuts then
-                res.position = E.Position(pts.total, { thresholds = M.ptsCuts })
+            local pc = (model.level or 0) >= maxLevel() and M and M.ptsCuts60 or (M and M.ptsCuts)
+            if pts and pc then
+                res.position = E.Position(pts.total, { thresholds = pc })
                 res.level = E.Level(res.position, res.followBonus)
             else
                 res.position, res.level = 2.0, E.Level(2.0, res.followBonus)
@@ -802,7 +803,13 @@ function QR.Rate(questId)
             if gear and gear.loading then res.reasons[2] = L.REASON_GEAR_LOADING end
             return res
         end
-        if pts and M and M.cuts and est.T > 0 then
+        if pts and M and M.ptsCuts60 and (model.level or 0) >= maxLevel() then
+            -- a max-level quest (Tier 0.5 and the like): its points alone, time not rated (user 2026-11-23 R002,
+            -- 11-25 "T0.5 are max-level quests: time is not rated"), among the max-level quests
+            res.position = E.Position(pts.total, { thresholds = M.ptsCuts60 })
+            res.level = E.Level(res.position, res.followBonus)
+            res.noTime = true
+        elseif pts and M and M.cuts and est.T > 0 then
             res.Rmax = pts.total / est.T * 3600
             res.position = E.Position(res.Rmax, { thresholds = M.cuts })
             res.level = E.Level(res.position, res.followBonus)
@@ -816,7 +823,8 @@ function QR.Rate(questId)
             -- 2026-11-25: a required unlock must not rate low for being long; review: Seal of Ascension rated low)
             res.level, res.keyQuest = math.max(3, res.level), "k"
         end
-        res.reasons = pts and maxReasons(res, pts, gearText, gear, est.T > 0 and est.T or nil) or {}
+        res.reasons = pts and maxReasons(res, pts, gearText, gear, (est.T > 0 and not res.noTime) and est.T or nil) or {}
+        if res.noTime then res.reasons[#res.reasons + 1] = L.REASON_MAX_QUEST end
         return res
     end
     -- reward gear (OneForAll)
