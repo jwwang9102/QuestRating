@@ -88,6 +88,119 @@ local function changeAtLevel(gv, itemID, questLevel, cfg)
     return "same", nil, L, k
 end
 
+-- Gear points at max level (user 2026-11-25): the best reward item against what you wear, 0..maxPts, full
+-- points when it reaches the slot's blue best-in-slot for your OneForAll spec (QR_GEN.bis, community lists):
+-- points = maxPts x (reward value - worn value) / (BIS value - worn value), values by OneForAll's Gear Value
+-- (your spec's stat weights). Worn already at or above the blue BIS: any upgrade is full points. A slot with no
+-- blue BIS in the lists: OneForAll's upgrade % against cfg.gearBig (the % that gives +2 below max level).
+-- Returns points, reason text or nil, info = { itemID, loading }.
+local SLOT_OF = { INVTYPE_HEAD = { "head" }, INVTYPE_NECK = { "neck" }, INVTYPE_SHOULDER = { "shoulder" },
+    INVTYPE_CLOAK = { "back" }, INVTYPE_CHEST = { "chest" }, INVTYPE_ROBE = { "chest" }, INVTYPE_WRIST = { "wrist" },
+    INVTYPE_HAND = { "hands" }, INVTYPE_WAIST = { "waist" }, INVTYPE_LEGS = { "legs" }, INVTYPE_FEET = { "feet" },
+    INVTYPE_FINGER = { "finger" }, INVTYPE_TRINKET = { "trinket" }, INVTYPE_WEAPON = { "main_hand", "off_hand" },
+    INVTYPE_WEAPONMAINHAND = { "main_hand" }, INVTYPE_WEAPONOFFHAND = { "off_hand" }, INVTYPE_SHIELD = { "off_hand" },
+    INVTYPE_HOLDABLE = { "off_hand" }, INVTYPE_2HWEAPON = { "two_hand" }, INVTYPE_RANGED = { "ranged_wand_relic" },
+    INVTYPE_RANGEDRIGHT = { "ranged_wand_relic" }, INVTYPE_THROWN = { "ranged_wand_relic" },
+    INVTYPE_RELIC = { "ranged_wand_relic" } }
+
+local function cachedOrRequest(itemID)
+    if G.failed[itemID] then return false end
+    local cached = not (C_Item and C_Item.IsItemDataCachedByID) or C_Item.IsItemDataCachedByID(itemID)
+    if not cached then
+        G.pending[itemID] = true
+        if C_Item and C_Item.RequestLoadItemDataByID then C_Item.RequestLoadItemDataByID(itemID) end
+    end
+    return cached
+end
+
+-- whether your class can use the item (armour type, weapon type, shield, relic): OneForAll's own check, which
+-- its Gear Value leaves to the caller (review 2026-11-25: a mage scored plate)
+local function canUse(itemID)
+    local ofa = _G.OneForAll
+    local _, _, _, loc, _, cid, sub = GetItemInfoInstant(itemID)
+    if type(ofa) == "table" and type(ofa.GearCanUse) == "function" then
+        local ok, r = pcall(ofa.GearCanUse, loc, cid, sub)
+        if ok then return r and true or false end
+    end
+    return true
+end
+
+-- the best value OneForAll gives a blue BIS item of the slot(s) for your spec, nil if none listed / not loaded;
+-- a one-handed weapon is compared with the BIS of the hand it would replace (OneForAll's replaced slot)
+local function bisValue(gv, equipLoc, replaced)
+    local _, class = UnitClass("player")
+    local spec = gv.SpecName and gv.SpecName()
+    local bySlot = QR_GEN and QR_GEN.bis and class and spec and QR_GEN.bis[class] and QR_GEN.bis[class][spec]
+    if not bySlot then return nil, false end
+    local best, listed, loading = nil, false, false
+    local slots = SLOT_OF[equipLoc] or {}
+    if equipLoc == "INVTYPE_WEAPON" then
+        local ofa = _G.OneForAll
+        local dual = type(ofa) == "table" and type(ofa.CanDualWield) == "function" and ofa.CanDualWield()
+        if replaced == 16 or replaced == 17 then
+            slots = { replaced == 17 and "off_hand" or "main_hand" }
+        elseif not dual then
+            slots = { "main_hand" } -- no dual wield: a one-hander goes in the main hand
+        end
+    end
+    for _, slot in ipairs(slots) do
+        for _, id in ipairs(bySlot[slot] or {}) do
+            listed = true
+            if G.failed[id] then
+                -- unknown to this client: skipped
+            elseif cachedOrRequest(id) then
+                local ok, v = pcall(gv.Upgrade, id)
+                if ok and type(v) == "number" and (not best or v > best) then best = v end
+            else
+                loading = true
+            end
+        end
+    end
+    return best, listed, loading
+end
+
+function G.Points(rec, cfg, maxPts)
+    local items = rec and rec.rw
+    if not items or not maxPts or maxPts <= 0 then return 0 end
+    local gv = gearValue()
+    if not gv or type(gv.Upgrade) ~= "function" then return 0, nil, { noOneForAll = true } end
+    local best, bestText, info, loading = 0, nil, nil, false
+    for _, itemID in ipairs(items) do
+        if not cachedOrRequest(itemID) then
+            if not G.failed[itemID] then loading = true end
+        else
+            local ok, v, d, equipped, base, replaced = pcall(gv.Upgrade, itemID)
+            local p = 0
+            if ok and type(v) == "number" and not equipped and d ~= nil and canUse(itemID) then
+                base = base or 0
+                local gain = v - base
+                if gain > 0 then
+                    local equipLoc = select(4, GetItemInfoInstant(itemID))
+                    local vb, listed, wait = bisValue(gv, equipLoc, replaced)
+                    if wait then loading = true end
+                    if vb and vb > base then
+                        p = maxPts * math.min(1, gain / (vb - base))
+                    elseif vb then
+                        p = maxPts -- worn is already at the blue BIS: an upgrade beyond it
+                    elseif not listed or not wait then -- no BIS listed, or none of it could be loaded
+                        local okc, kind, pct = pcall(gv.Change, itemID)
+                        if okc and (kind == "up" or kind == "new") and type(pct) == "number" then
+                            p = maxPts * math.min(1, pct / cfg.gearBig)
+                        end
+                    end
+                end
+            end
+            if p > best then
+                best, info = p, { itemID = itemID }
+                bestText = string.format(L.REASON_GEAR_POINTS, itemLabel(itemID), p)
+            end
+        end
+    end
+    info = info or {}
+    info.loading = loading and best == 0
+    return best, bestText, info
+end
+
 -- Best single reward (choice and fixed rewards are not added up).
 -- Returns bonus, reason text or nil, info = { itemID, kind, pct, level, scale, loading }
 function G.Bonus(rec, cfg)

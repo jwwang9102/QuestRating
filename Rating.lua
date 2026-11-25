@@ -172,7 +172,8 @@ local function runCompanions(model, pl, cfg, all)
     end
     local wing = model.run and model.run.wings[1]
     local list = wing and QR_GEN.wingQuests and QR_GEN.wingQuests[wing]
-    if not list or model.ready then return out end
+    local outside = {} -- (all) the dungeon's quests with nothing inside the run left: done outside, on the same trip
+    if not list or model.ready then return out, outside end
     local taken = { [model.id] = true }
     local function excluded(rec, id)
         for _, x in ipairs(rec.ex or {}) do
@@ -200,10 +201,13 @@ local function runCompanions(model, pl, cfg, all)
                     or D.QuestXP(rec, pl)
                 out[#out + 1] = { id = id, xp = frac * (qxp or 0), t = cfg.fixedTime, taken = inLogQuest(id),
                                   open = openToYou(id, rec, pl) }
+            elseif all and other and other.run and not other.insideLeft and not other.noData and #other.missing == 0 then
+                taken[id] = true
+                outside[#outside + 1] = id
             end
         end
     end
-    return out
+    return out, outside
 end
 
 -- The dungeon's other quests still to do (inside or outside): they share an open-world route (user
@@ -616,6 +620,49 @@ local function buildReasons(res, model, est, cfg)
     return reasons
 end
 
+-- Points of a quest once the character is at max level (user 2026-11-25; every quest, not only max-level ones):
+-- gold (money at max level + the best vendor sell price of the reward items) 0-5, gear 0-20 (QR.Gear.Points),
+-- reputation 0-10, key quest 20 (every member needs it) or 10 (key, new reputation or system); gold and
+-- reputation full at QR_GEN.maxLevel.goldRef / repRef (95th percentile of all quests). Mirror of the build's
+-- max_points (which has no gear). Returns { gold, gear, rep, key, total, copper }, gear text, gear info.
+local function maxPoints(rec, cfg)
+    local M = QR_GEN and QR_GEN.maxLevel
+    if not (M and rec) then return nil end
+    -- money / reputation in no source (ru: most WoW Forever quests): only gear and key points are known; the
+    -- caller does not rate a quest with nothing known (review 2026-11-25: they read as 0 points, "very low")
+    local P = M.pts
+    local copper = (rec.g6 or 0) + (rec.sp or 0)
+    local p = { copper = copper }
+    p.gold = P.gold * math.min(1, copper / math.max(1, M.goldRef))
+    p.rep = P.rep * math.min(1, (rec.rp or 0) / math.max(1, M.repRef))
+    p.key = rec.kq == "t" and P.top or (rec.kq == "k" and P.plus or 0)
+    local gearText, gear
+    p.gear, gearText, gear = QR.Gear.Points(rec, cfg, P.gear)
+    p.total = p.gold + p.rep + p.key + p.gear
+    p.unknown = rec.ru == 1 and p.gear <= 0 and p.key <= 0
+    return p, gearText, gear
+end
+
+local function maxReasons(res, pts, gearText, gear, T)
+    local r = {}
+    if res.keyQuest == "t" then
+        local rec = D.Record(res.questId)
+        r[#r + 1] = rec and rec.kw == "skill" and L.REASON_KEY_SKILL or L.REASON_KEY_TOP
+    end
+    if T then
+        r[#r + 1] = string.format(L.REASON_MAX_RATE, pts.total / T * 3600, math.max(1, math.floor(T / 60 + 0.5)))
+    end
+    r[#r + 1] = string.format(L.REASON_MAX_POINTS, pts.gold, pts.gear, pts.rep, pts.key)
+    if pts.copper > 0 then r[#r + 1] = string.format(L.REASON_MAX_GOLD, pts.copper / 10000) end
+    if gearText then r[#r + 1] = gearText end
+    if gear and gear.loading then r[#r + 1] = L.REASON_GEAR_LOADING end
+    if res.followBonus and res.followBonus > 0 then
+        local frec = D.Record(res.followBonusId)
+        r[#r + 1] = string.format(L.REASON_FOLLOW_BONUS, frec and frec.t or "?", res.followBonus)
+    end
+    return r
+end
+
 -- Returns a result table (all intermediate values kept for /qr debug), or nil, reason.
 function QR.Rate(questId)
     if not QR.ready then return nil, L.MSG_NOT_READY end
@@ -628,11 +675,19 @@ function QR.Rate(questId)
         local zone, depth = dungeonAhead(questId, cfg)
         if zone then res.prereqZone, res.prereqDepth = zone, depth end
     end
+    -- a reward besides gold (user 2026-11-25: a quest left out for no / almost no XP that has one is rated):
+    -- a key quest, reputation, or a reward item that is an upgrade for you (OneForAll)
+    local function otherReward(rec)
+        if not rec then return false end
+        if rec.kq or (rec.rp or 0) > 0 then return true end
+        local b = QR.Gear.Bonus(rec, cfg)
+        return (b or 0) > 0
+    end
     -- gives no XP: not rated below max level and not in the standard (user 2026-11-22 / 11-23); an
     -- attunement or a new skill is still the best rating, at max level XP is not rated anyway
     if model.noXP and res.playerLevel < maxLevel() then
         local rec = D.Record(questId)
-        if not (rec and rec.kq == "t") then
+        if not (rec and rec.kq == "t") and not otherReward(rec) then
             res.noData, res.unrated = true, true
             res.reasons = { L.REASON_UNRATED_NO_XP }
             if rec and rec.kq == "k" then
@@ -649,7 +704,7 @@ function QR.Rate(questId)
     if med and res.playerLevel < maxLevel() and (model.questXP or 0) > 0
         and model.questXP < (QR_GEN.lowXP or 0.1) * med then
         local rec = D.Record(questId)
-        if not (rec and (rec.kq == "t" or (rec.nq and #rec.nq > 0))) then -- nq: quests it opens (build: low_xp)
+        if not (rec and (rec.kq == "t" or (rec.nq and #rec.nq > 0))) and not otherReward(rec) then -- nq: quests it opens (build: low_xp)
             res.noData, res.unrated, res.lowXP = true, true, true
             res.reasons = { string.format(L.REASON_UNRATED_LOW_XP, model.questXP) }
             if rec and rec.kq == "k" then
@@ -669,26 +724,27 @@ function QR.Rate(questId)
             return res
         end
         if res.playerLevel >= maxLevel() then
-            -- max level: XP efficiency is not rated (base 中 + reward and key-quest bonus), so missing time
-            -- data does not matter (user 2026-11-23, e.g. Tier 0.5 quests)
-            res.atMax, res.position = true, 2.0
-            res.bonus, res.gearText, res.gear = QR.Gear.Bonus(rec, cfg)
-            -- a key quest further on in its chain adds +2, as for quests that can be estimated
+            -- max level, and the time cannot be estimated: ranked on its points alone (user 2026-11-25: "rank by
+            -- points only"; QR_GEN.maxLevel.ptsCuts), with the key-quest rules of the timed case
+            res.atMax = true
+            local M = QR_GEN and QR_GEN.maxLevel
+            local pts, gearText, gear = maxPoints(rec, cfg)
+            res.maxPts = pts
             res.followBonus, res.followBonusId = followUpBonus(nil, cfg, questId)
-            if res.followBonus > 0 then res.bonus = (res.bonus or 0) + res.followBonus end
-            res.level = E.Level(2.0, res.bonus)
-            res.reasons = { L.REASON_MAX_BASE }
-            if res.followBonus > 0 then
-                local frec = D.Record(res.followBonusId)
-                res.reasons[#res.reasons + 1] = string.format(L.REASON_FOLLOW_BONUS, frec and frec.t or "?", res.followBonus)
+            if pts and pts.unknown and not (rec and rec.kq) then
+                res.noData, res.reasons = true, { L.REASON_MAX_REW_UNKNOWN }
+                for _, m in ipairs(#model.missing > 0 and model.missing or { L.NO_DATA }) do res.reasons[#res.reasons + 1] = m end
+                return res
             end
-            if rec and rec.kq == "k" then
-                res.level, res.keyQuest = E.Level(2.0, (res.bonus or 0) + 2), "k"
-                res.reasons[#res.reasons + 1] = string.format(L.REASON_KEY_PLUS, L.KEY_KIND[rec.kw] or "")
+            if pts and M and M.ptsCuts then
+                res.position = E.Position(pts.total, { thresholds = M.ptsCuts })
+                res.level = E.Level(res.position, res.followBonus)
+            else
+                res.position, res.level = 2.0, E.Level(2.0, res.followBonus)
             end
-            if res.gearText then res.reasons[#res.reasons + 1] = res.gearText end
-            if res.gear and res.gear.loading then res.reasons[#res.reasons + 1] = L.REASON_GEAR_LOADING end
-            -- what could not be estimated (no effect on the rating at max level)
+            if rec and rec.kq == "k" then res.level, res.keyQuest = math.max(3, res.level), "k" end
+            res.reasons = pts and maxReasons(res, pts, gearText, gear, nil) or {}
+            res.reasons[#res.reasons + 1] = L.REASON_MAX_NO_TIME
             for _, m in ipairs(#model.missing > 0 and model.missing or { L.NO_DATA }) do res.reasons[#res.reasons + 1] = m end
             return res
         end
@@ -731,6 +787,37 @@ function QR.Rate(questId)
             local p = E.Position(res.Rchain, scale)
             res.position = p
         end
+    end
+    if res.atMax then
+        -- once the character is at max level, every quest: reward points per hour (user 2026-11-25), ranked on
+        -- QR_GEN.maxLevel.cuts; a key quest further on in its chain adds its +2 (a required step must not rate
+        -- low for being long); an attunement every member needs stays the best rating
+        local rec = D.Record(questId)
+        local M = QR_GEN and QR_GEN.maxLevel
+        local pts, gearText, gear = maxPoints(rec, cfg)
+        res.maxPts = pts
+        res.followBonus, res.followBonusId = followUpBonus(nil, cfg, questId)
+        if pts and pts.unknown and not (rec and rec.kq) then
+            res.noData, res.reasons = true, { L.REASON_MAX_REW_UNKNOWN }
+            if gear and gear.loading then res.reasons[2] = L.REASON_GEAR_LOADING end
+            return res
+        end
+        if pts and M and M.cuts and est.T > 0 then
+            res.Rmax = pts.total / est.T * 3600
+            res.position = E.Position(res.Rmax, { thresholds = M.cuts })
+            res.level = E.Level(res.position, res.followBonus)
+        else
+            res.position, res.level = 2.0, E.Level(2.0, res.followBonus)
+        end
+        if rec and rec.kq == "t" then
+            res.level, res.keyQuest = 4, "t"
+        elseif rec and rec.kq == "k" then
+            -- a dungeon key, a new reputation or system: at least "high" however long it takes (user
+            -- 2026-11-25: a required unlock must not rate low for being long; review: Seal of Ascension rated low)
+            res.level, res.keyQuest = math.max(3, res.level), "k"
+        end
+        res.reasons = pts and maxReasons(res, pts, gearText, gear, est.T > 0 and est.T or nil) or {}
+        return res
     end
     -- reward gear (OneForAll)
     res.bonus, res.gearText, res.gear = QR.Gear.Bonus(D.Record(questId), cfg)
@@ -953,7 +1040,17 @@ function rateWing(key)
     local run = { wings = { key }, T = w.t, n = w.n or 0, kills = { w.k }, shares = { w.s }, inner = w.s }
     local xp = E.RunXP(run, pl, cfg.partyMax)
     local T = w.t + ((QR_GEN.dungeonTravel) or 0) -- the run itself (travel not counted, user 2026-11-24)
-    local comps = runCompanions({ id = 0, run = run }, pl, cfg, true) -- every dungeon quest you can still do
+    local comps, outside = runCompanions({ id = 0, run = run }, pl, cfg, true) -- every dungeon quest you can still do
+    -- the dungeon's quests done outside the run (user 2026-11-25: "a dungeon quest solved outside counts too"):
+    -- their own open-world estimate, on the same trip
+    for _, id in ipairs(outside or {}) do
+        local rec = D.Record(id)
+        local est = soloEstimate(id, pl, cfg)
+        if rec and est then
+            comps[#comps + 1] = { id = id, xp = est.XP, t = est.T, taken = inLogQuest(id), open = openToYou(id, rec, pl),
+                                  outside = true }
+        end
+    end
     -- also the run with only the quests already in your log (user 2026-11-24: which quests to take, and the
     -- rating without them)
     local xp0, T0 = xp, T

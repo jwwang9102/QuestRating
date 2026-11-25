@@ -28,8 +28,16 @@ What goes into the estimate:
   outside is rated as an ordinary quest; when every objective can be done inside or outside, the more
   efficient way is used and named in the reasons. Taking, an objective or turning in inside the dungeon
   makes it a dungeon quest. Objectives in several dungeons are not estimated;
-- at max level XP efficiency is not rated: base 中 plus the reward and key-quest bonus (also for quests
-  whose time cannot be estimated);
+- once your character is at max level, every quest is rated by its rewards per hour of its time: gold
+  0-5 (money at max level plus the best vendor price of the reward items), gear 0-20 (the reward against what
+  you wear, by OneForAll's Gear Value; full points at the slot's blue best-in-slot for your spec, from community
+  pre-raid lists), reputation 0-10, key quests 20 (every member needs it) or 10 (dungeon key, new reputation
+  or system), ranked against all quests; an attunement stays the best rating and a key quest further on in the
+  chain adds +2, a dungeon key or new system is at least 高. Capital-city reputation counts at a quarter. A
+  quest whose time cannot be estimated is ranked on its points alone; a quest whose money and reputation are in
+  no source (most WoW Forever additions) is not rated unless it has gear or key points;
+- a quest left out for no or almost no XP is rated after all when it has a reward besides gold (a key quest,
+  reputation, or a reward item that is an upgrade for you);
 - key quests: an attunement every member needs (Onyxia's Drakefire Amulet chain) and a quest that
   teaches a new skill (class spells, profession ranks; not recipes) are rated best; a dungeon key (one
   per group), a new reputation or a new system (camping, riding) gives +2 levels. Plain turn-ins and
