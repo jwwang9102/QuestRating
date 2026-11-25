@@ -201,25 +201,20 @@ function E.Quest(model, playerLevel, cfg, nearby, party)
     end
     local share = min(cfg.nearbyCap, 1 + (nearby or 0))
     res.share = share
-    -- nearby quests share the walks in the area (user 2026-11-21 / 11-23, R080 "quests in the same area"); a
-    -- ship / zeppelin (its average wait + crossing) and a delivery long enough to fly (kind "d", flightMinYards: a
-    -- trip out of the area, e.g. a letter to a capital) are yours alone (review 2026-11-24: a quest 14,504 yd away
-    -- showed 3 min); walks to camps stay shared even when long (the quests of one hub go to the same far camps)
-    local tNear, tFar, tEscort = 0, 0, 0
+    -- nearby quests share the whole route, long deliveries and ships too (R080; user 2026-11-24: "long
+    -- deliveries are shared: a delivery is a lead-in, counted with the quests it leads to")
+    local tRoute, tEscort = 0, 0
     for _, lg in ipairs(model.routeLegs or {}) do
         if lg.escort then
             tEscort = tEscort + lg.seconds -- at the NPC's pace, not shared with nearby quests
-        elseif lg.seconds then
-            tFar = tFar + lg.seconds
-        elseif lg.kind == "d" and lg.yards >= cfg.flightMinYards then
-            tFar = tFar + E.LegTime(lg.yards, cfg, playerLevel)
         else
-            tNear = tNear + E.LegTime(lg.yards, cfg, playerLevel)
+            -- ship / zeppelin legs carry their time (average wait + crossing), walks their yards
+            tRoute = tRoute + (lg.seconds or E.LegTime(lg.yards, cfg, playerLevel))
         end
     end
-    res.TrouteAlone = tNear + tFar
-    res.TrouteNear = tNear -- the part nearby quests share (the map's hubs share it the same way)
-    res.Troute = tNear / share + tFar
+    res.TrouteAlone = tRoute
+    res.TrouteNear = tRoute -- the part nearby quests share (all of it; the map's hubs share it the same way)
+    res.Troute = tRoute / share
     res.Tescort = tEscort
     res.Tfixed = cfg.fixedTime -- accept + turn-in talk, also for a logged quest (user 2026-11-23)
     res.T = res.Troute + res.Tescort + res.Tfarm + res.Tfixed

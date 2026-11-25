@@ -350,7 +350,7 @@ function D.BuildModel(questId)
                 if boat then
                     legs[#legs + 1] = { label = label, seconds = lg[2], boat = true }
                 else
-                    legs[#legs + 1] = { label = label, yards = lg[2], kind = kind }
+                    legs[#legs + 1] = { label = label, yards = lg[2] }
                     yards = yards + lg[2]
                 end
             end

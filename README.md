@@ -18,8 +18,7 @@ What goes into the estimate:
 - your own pace: your measured solo fight time and the gap between fights (recorded in game) are used
   once there are enough samples; until then a default is used;
 - shared route: nearby quests you can do along the way, including ones you have not taken yet, share
-  the walks in the area; a ship or zeppelin and a delivery long enough to fly (a trip out of the area,
-  such as a letter to a capital) are not shared;
+  the trip (ships and long deliveries too);
 - quests already in your log are updated by progress; accepting gives no discount;
 - group quests are rated for a party of 3-5 players; a quest with an elite target is estimated solo and
   tagged "建議組隊";
@@ -39,8 +38,8 @@ What goes into the estimate:
 - quests that give no XP, or almost none at your level (less than a tenth of the median quest XP of the
   quests you can take at your level) and open no other quest, are not rated below max level (shown as 不評) and are left out of
   the standards and the map recommendation;
-- a quest in a chain (next in chain, offered right after, or the next quest needs it; not a breadcrumb,
-  an opener of three or more quests or a quest any one of three or more lines leads to; into dungeons too)
+- a quest in a chain (next in chain, offered right after, the next quest needs it, or a breadcrumb /
+  delivery to the quest it leads to; not an opener of three or more quests or a quest any one of three or more lines leads to; into dungeons too)
   is ranked by its whole chain; at a choice of two each branch is its own
   route, the quests before it take the better one; quests you have done are left out; a follow-up with an
   upgrade reward (with OneForAll) or a key quest adds its bonus. The tooltip lists the follow-ups, each

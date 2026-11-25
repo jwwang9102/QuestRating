@@ -282,7 +282,7 @@ local function soloEstimate(questId, lv, cfg)
 end
 
 -- Quest chains (user 2026-11-23): database cn / cp = the next / previous quests of the same chain (the build
--- tells a chain from a mere prerequisite: next in chain or offered right after, not a breadcrumb, not an opener
+-- tells a chain: next in chain, offered right after, a prerequisite of it, or a breadcrumb to it; not an opener
 -- of 3+ quests). chainCost: hours saved and seconds of f, the next (forward) or previous quest of questId: a
 -- follow-up at the level you would do it, max(your level, its quest level), a quest before at its own level (at
 -- most yours), each with its usual route sharing (as the standard), plus the walk between turn-in and giver;
@@ -424,6 +424,14 @@ function chainPaths(questId, pl, cfg, top, forward, seen, depth, memo)
                     if #out >= CHAIN_PATHS then return out end
                 end
             end
+        end
+        if not forward and #list > 0 then
+            -- only breadcrumbs before it (not needed): taking it without them is a route too (mirror of the build)
+            local needed = false
+            for _, f in ipairs(list) do
+                if contains(rec.p1, f) or contains(rec.pa, f) then needed = true end
+            end
+            if not needed then out[#out + 1] = { h = 0, t = 0, ids = {} } end
         end
     end
     if #out == 0 then out[1] = { h = 0, t = 0, ids = {} } end
