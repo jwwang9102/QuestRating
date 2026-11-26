@@ -133,7 +133,13 @@ function UI.FillRating(tt, questId)
     for _, r in ipairs(res.reasons or {}) do tt:AddLine(r, 1, 1, 1, true) end
     local est = res.est
     if est then
-        tt:AddLine(string.format(L.TT_TIME, math.max(1, math.floor(est.T / 60 + 0.5)), est.XP), 0.62, 0.62, 0.62)
+        -- the quest's whole time, its route unshared (user 2026-11-25: "shared only in the rating; the quest's
+        -- own time is shown in full"); the rating uses est.T, the route shared with nearby quests
+        local full = est.T - (est.Troute or 0) + (est.TrouteAlone or est.Troute or 0)
+        tt:AddLine(string.format(L.TT_TIME, math.max(1, math.floor(full / 60 + 0.5)), est.XP), 0.62, 0.62, 0.62)
+        if (est.TrouteAlone or 0) > (est.Troute or 0) + 30 then
+            tt:AddLine(string.format(L.TT_TIME_SHARED, math.max(1, math.floor(est.T / 60 + 0.5))), 0.62, 0.62, 0.62)
+        end
         if not res.atMax then
             if res.median then
                 tt:AddLine(string.format(L.TT_EFFICIENCY_MEDIAN, (res.R or 0) / res.median), 0.62, 0.62, 0.62)

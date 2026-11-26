@@ -573,8 +573,9 @@ local function buildReasons(res, model, est, cfg)
             cands[#cands + 1] = { t = est.wait, text = string.format(objects and L.REASON_RESPAWN_OBJECT or L.REASON_RESPAWN,
                 math.max(0, S), math.floor(est.wait / 60 + 0.5)) }
         end
-        if est.Troute > 0 then
-            cands[#cands + 1] = { t = est.Troute, text = string.format(L.REASON_ROUTE, math.max(1, math.floor(est.Troute / 60 + 0.5))) }
+        if est.Troute > 0 then -- ranked by the shared route, its text the whole route (user 2026-11-25)
+            local full = est.TrouteAlone or est.Troute
+            cands[#cands + 1] = { t = est.Troute, text = string.format(L.REASON_ROUTE, math.max(1, math.floor(full / 60 + 0.5))) }
         end
         if (est.Tescort or 0) > 0 then
             cands[#cands + 1] = { t = est.Tescort, text = string.format(L.REASON_ESCORT, math.max(1, math.floor(est.Tescort / 60 + 0.5))) }
@@ -613,7 +614,7 @@ local function buildReasons(res, model, est, cfg)
     -- data reliability
     for _, f in ipairs(model.flags) do
         if f == L.DROP_UNKNOWN or f == L.COUNT_UNKNOWN or f == L.ROUTE_UNKNOWN or f == L.LOCATION_UNKNOWN or f == L.SPAWNS_INCOMPLETE
-            or f == L.DROP_EMULATED or f == L.MULTI_UNKNOWN then
+            or f == L.DROP_EMULATED then
             add(f)
         end
     end

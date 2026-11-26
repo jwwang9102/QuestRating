@@ -98,7 +98,6 @@ QR.L = {
     REASON_SOLVE_IN = "建議進副本解（較快）",
     REASON_GROUP = "團體任務·建議組隊（以 %d 人計）",
     DROP_EMULATED = "掉率取自模擬伺服器資料，可能不準",
-    MULTI_UNKNOWN = "不確定是否每人各掉一份（以一份計）",
     MISSING_MOB_LEVEL = "怪物等級隨你縮放，無法估算",
     REASON_LEVEL_GAP = "隊友比怪高 12 級以上：沒經驗",
     MISSING_DUNGEON_WING = "目標在副本哪一區不明",
@@ -131,6 +130,8 @@ QR.L = {
     -- tooltip
     TT_TITLE = "QuestRating",
     TT_TIME = "預估約 %d 分鐘·經驗 %d",
+    LEG_FLIGHT = "飛行",
+    TT_TIME_SHARED = "評分時路程和附近任務分攤：約 %d 分鐘",
     TT_EFFICIENCY = "效率：練功的 %.1f 倍",
     TT_EFFICIENCY_MEDIAN = "效率：同等級任務的 %.1f 倍",
     TT_FOLLOW_CHAIN = "後續任務（評分用的路線）：",

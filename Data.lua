@@ -87,7 +87,7 @@ local KIND = { [1] = "kill", [2] = "item", [3] = "object", [4] = "item", [5] = "
 local RANK = { [1] = "elite", [2] = "rare" }
 local FLAG = {
     DU = "DROP_UNKNOWN", CU = "COUNT_UNKNOWN", RU = "ROUTE_UNKNOWN", LU = "LOCATION_UNKNOWN",
-    SI = "SPAWNS_INCOMPLETE", FM = "FEW_MOBS", EL = "ELITE", RO = "RARE_ONLY", DE = "DROP_EMULATED", MU = "MULTI_UNKNOWN",
+    SI = "SPAWNS_INCOMPLETE", FM = "FEW_MOBS", EL = "ELITE", RO = "RARE_ONLY", DE = "DROP_EMULATED",
 }
 local LEG = { s = "start", t = "target", f = "finish", d = "deliver" }
 
@@ -145,7 +145,7 @@ end
 function D.OpenModel(model, cfg)
     if not model.openLegs then return nil end
     local m = { id = model.id, questXP = model.questXP, center = model.center, inLog = model.inLog, group = model.group,
-                ready = model.ready, progress = model.progress, routeLegs = model.openLegs,
+                ready = model.ready, progress = model.progress, routeLegs = model.openLegs, routeClear = model.openClear,
                 routeYards = model.openYards, objectives = {}, groups = {} }
     local byGroup = {}
     for _, obj in ipairs(model.objectives) do
@@ -155,7 +155,7 @@ function D.OpenModel(model, cfg)
             if not out then return nil end
             -- the outside camp's own values (false = none there, not the inside camp's)
             o = setmetatable({ S = out[1], A = out[2], d = out[3], rs = out[4] or false, presence = out[5] or false,
-                               altPer = out[6] or false, campWalk = out[7] or false,
+                               altPer = out[6] or false, campWalk = out[7] or false, trash = false,
                                synthetic = out[1] < cfg.minSpawns }, { __index = obj })
         end
         m.objectives[#m.objectives + 1] = o
@@ -302,7 +302,7 @@ function D.BuildModel(questId)
             index = i, kind = KIND[o.k] or "event", fromObject = o.k == 4, N = o.n, countSource = o.cs,
             p = o.p, pUnknown = o.pu == 1, S = o.S, A = o.A, d = o.d, mobLevel = o.lv, rank = RANK[o.r] or "normal",
             synthetic = o.sy == 1, src = o.src, center = point(o.c), group = o.g, item = o.i, rs = o.rs,
-            dRoute = o.dr or 0, dDetour = o.dd or 0, dWing = o.dw, dMult = o.dm, out = o.ox, levelUnknown = o.lu == 1, multiDrop = o.md == 1, altPer = o.ap, presence = o.pr, campWalk = o.cw, offRoute = o.di == 1, both = o.bf,
+            dRoute = o.dr or 0, dDetour = o.dd or 0, dWing = o.dw, dMult = o.dm, out = o.ox, levelUnknown = o.lu == 1, multiDrop = o.md == 1, altPer = o.ap, presence = o.pr, campWalk = o.cw, trash = o.tr, offRoute = o.di == 1, both = o.bf,
         }
         local lo = liveFor(i, o.n)
         obj.liveMatched = lo ~= nil
@@ -342,13 +342,14 @@ function D.BuildModel(questId)
         for _, lg in ipairs(list or {}) do
             local kind = lg[1]
             local first = kind:sub(1, 1)
-            local boat, escort = first == "B", first == "E"
-            local label = LEG[(boat or escort) and kind:sub(2) or kind] or kind
+            local boat, escort, flight = first == "B", first == "E", first == "F"
+            local label = LEG[(boat or escort or flight) and kind:sub(2) or kind] or kind
             if escort then
                 if not model.ready then legs[#legs + 1] = { label = label, seconds = lg[2], escort = true } end
             elseif not ((model.ready or model.progress) and label == "start") and not (model.ready and label == "target") then
-                if boat then
-                    legs[#legs + 1] = { label = label, seconds = lg[2], boat = true }
+                if boat or flight then
+                    -- ship / zeppelin, or a flight between flight masters (build: fly_route), in seconds
+                    legs[#legs + 1] = { label = label, seconds = lg[2], boat = boat or nil, flight = flight or nil }
                 else
                     legs[#legs + 1] = { label = label, yards = lg[2] }
                     yards = yards + lg[2]
@@ -358,8 +359,10 @@ function D.BuildModel(questId)
         return legs, yards
     end
     model.routeLegs, model.routeYards = legsOf(rec.legs)
+    -- hostile mobs along the walked legs (build: corridor_kills), flat { level, rank, count, ... }
+    model.routeClear = rec.rc
     -- a dungeon quest done in the open world instead (rec.ol: its own route over camps outside dungeons)
-    if rec.ol then model.openLegs, model.openYards = legsOf(rec.ol) end
+    if rec.ol then model.openLegs, model.openYards = legsOf(rec.ol); model.openClear = rec.orc end
 
     -- dungeon quest: the normal run of its wing(s) (Generated.lua QR_GEN.wing, user 2026-11-23)
     if rec.wd and QR_GEN.wing then

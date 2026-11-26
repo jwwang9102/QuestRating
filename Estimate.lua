@@ -20,10 +20,11 @@ function E.TravelSpeed(cfg, playerLevel)
     return cfg.walkSpeed
 end
 
--- Seconds for one travel leg: ground, or a flight path when that is faster on a long leg.
-function E.LegTime(yards, cfg, playerLevel)
+-- Seconds for one travel leg: ground, or a flight path when that is faster on a long leg; noFly for a quest's
+-- route legs, whose flights are their own legs (the build's fly_route).
+function E.LegTime(yards, cfg, playerLevel, noFly)
     local ground = yards / E.TravelSpeed(cfg, playerLevel)
-    if yards >= cfg.flightMinYards then
+    if not noFly and yards >= cfg.flightMinYards then
         return min(ground, cfg.flightOverhead + yards / cfg.flightSpeed)
     end
     return ground
@@ -89,7 +90,7 @@ end
 -- (2 players 1.0, 3 1.166, 4 1.3, 5 1.4) split over the members. Fight time: your solo fight time (elites
 -- included) / (party - 1): one member heals, the others deal damage as you do (user 2026-11-23: N to N-1
 -- times as fast, with a healer). Kill credit is shared; items to collect several of x party (one per corpse)
--- unless the item drops for every member (unknown for every such item in this build: flagged MULTI_UNKNOWN).
+-- unless the item drops for every member (user 2026-11-25: one per corpse unless the data says otherwise).
 local GROUP_RATE = { 1.0, 1.0, 1.166, 1.3, 1.4 }
 E.GROUP_RATE = GROUP_RATE
 
@@ -163,7 +164,24 @@ function E.Objective(obj, playerLevel, cfg, party)
     end
     -- the walk between camps merged offline (walking to targets up at the next camp beats waiting), once
     local cw = (not (obj.synthetic or not obj.S) and obj.campWalk) or 0
-    r.T = r.K * r.tKill + r.wait + (r.altT or 0) + (cw > 0 and E.LegTime(cw, cfg, playerLevel) or 0)
+    -- the camp's other hostile mobs pulled with the targets (build: camp_trash, flat { level, rank, per target }),
+    -- mounted or not, when they give XP (user 2026-11-25)
+    local trT = 0
+    if obj.trash then
+        local RANKS = { [0] = "normal", [1] = "elite", [2] = "rare" }
+        local _, gapNoWalk = E.GapTerms(cfg)
+        for i = 1, #obj.trash - 2, 3 do
+            local lv, rank, per = obj.trash[i], obj.trash[i + 1], obj.trash[i + 2]
+            if lv > E.GrayLevel(playerLevel) and lv < playerLevel + 5 then -- grey / red (build: RED_LEVELS)
+                local k = r.K * per
+                local ft = E.FightTime(lv, playerLevel, RANKS[rank] or "normal", cfg) / (party and (party.n - 1) or 1)
+                trT = trT + k * (ft + gapNoWalk)
+                r.xp = r.xp + k * E.KillXP(lv, playerLevel, rank == 1) * (party and GROUP_RATE[party.n] / party.n or 1)
+            end
+        end
+    end
+    r.trash = trT
+    r.T = r.K * r.tKill + r.wait + (r.altT or 0) + (cw > 0 and E.LegTime(cw, cfg, playerLevel) or 0) + trT
     -- creature drops and objects with close times, both taken while farming (build: bf, user 2026-11-23)
     if obj.both then
         r.T, r.wait, r.xp, r.K = r.T * obj.both, r.wait * obj.both, r.xp * obj.both, r.K * obj.both
@@ -209,12 +227,29 @@ function E.Quest(model, playerLevel, cfg, nearby, party)
             tEscort = tEscort + lg.seconds -- at the NPC's pace, not shared with nearby quests
         else
             -- ship / zeppelin legs carry their time (average wait + crossing), walks their yards
-            tRoute = tRoute + (lg.seconds or E.LegTime(lg.yards, cfg, playerLevel))
+            tRoute = tRoute + (lg.seconds or E.LegTime(lg.yards, cfg, playerLevel, true))
+        end
+    end
+    -- hostile mobs along the walked legs (user 2026-11-25: a tunnel full of mobs lengthens the walk), fought on
+    -- foot below mountLevel when they give XP (mirror of the build's rate / corridor_kills)
+    local rc = model.routeClear
+    local clearXP = 0
+    if rc and E.TravelSpeed(cfg, playerLevel) == cfg.walkSpeed and not model.ready then
+        local RANKS = { [0] = "normal", [1] = "elite", [2] = "rare" }
+        local _, gapNoWalk = E.GapTerms(cfg)
+        for i = 1, #rc - 2, 3 do
+            local lv, rank, n = rc[i], rc[i + 1], rc[i + 2]
+            if lv > E.GrayLevel(playerLevel) and lv < playerLevel + 5 then -- grey: no XP; red (5+ above): avoided
+                local ft = E.FightTime(lv, playerLevel, RANKS[rank] or "normal", cfg) / (party and (party.n - 1) or 1)
+                tRoute = tRoute + n * (ft + gapNoWalk)
+                clearXP = clearXP + n * E.KillXP(lv, playerLevel, rank == 1) * (party and GROUP_RATE[party.n] / party.n or 1)
+            end
         end
     end
     res.TrouteAlone = tRoute
     res.TrouteNear = tRoute -- the part nearby quests share (all of it; the map's hubs share it the same way)
     res.Troute = tRoute / share
+    res.mobXP = res.mobXP + clearXP / share -- the mobs on the way are part of the route, shared alike
     res.Tescort = tEscort
     res.Tfixed = cfg.fixedTime -- accept + turn-in talk, also for a logged quest (user 2026-11-23)
     res.T = res.Troute + res.Tescort + res.Tfarm + res.Tfixed

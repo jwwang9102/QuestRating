@@ -71,6 +71,8 @@ local function debugQuest(questId)
         local name = (L.LEG and L.LEG[lg.label]) or lg.label
         if lg.boat then
             legs[#legs + 1] = string.format("%s %s %.0f秒", name, L.LEG_BOAT, lg.seconds)
+        elseif lg.flight then
+            legs[#legs + 1] = string.format("%s %s %.0f秒", name, L.LEG_FLIGHT, lg.seconds)
         elseif lg.escort then
             legs[#legs + 1] = string.format("%s %s %.0f秒", name, L.LEG_ESCORT, lg.seconds)
         else

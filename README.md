@@ -17,11 +17,15 @@ What goes into the estimate:
 - escorts: the escorted NPC's path and walking speed;
 - your own pace: your measured solo fight time and the gap between fights (recorded in game) are used
   once there are enough samples; until then a default is used;
-- shared route: nearby quests you can do along the way, including ones you have not taken yet, share
-  the trip (ships and long deliveries too);
+- travel: walking, or a flight when quicker (walk to a flight master of your faction, the flight along the
+  client's flight paths from OneForAll's data, walk on), or a ship. Below mount level the hostile mobs within
+  20 yd of the way that cannot be slipped past (another one within 40 yd) are fought, and at a camp the other
+  hostile mobs beside the targets are cleared along with them, mounted or not;
+- shared route: in the rating, nearby quests you can do along the way, including ones you have not taken
+  yet, share the trip (ships and long deliveries too); the tooltip shows the quest's whole time;
 - quests already in your log are updated by progress; accepting gives no discount;
-- group quests are rated for a party of 3-5 players; a quest with an elite target is estimated solo and
-  tagged "建議組隊";
+- a quest with an elite target (and the server's group quests) is rated for a party of 3-5 players and
+  tagged "建議組隊": items needed x the party, fights shared;
 - dungeon quests are rated as a run: a route-based run time, shared with the other quests of the same
   run; what one run does not finish is caught up by the most efficient option; the trip to the dungeon
   is not counted. A quest whose remaining objectives are all
@@ -54,8 +58,9 @@ What goes into the estimate:
   upgrade reward (with OneForAll) or a key quest adds its bonus. The tooltip lists the follow-ups, each
   with its own rating (the quest alone) and reasons;
 
-Data reliability: drop rates come from Classic emulator data and may differ from the real game, and
-per-member drops in a group are unknown.
+Data reliability: drop rates come from Classic emulator data and may differ from the real game. A group
+quest needing more than one of an item counts one per corpse (each member needs their own) unless the item
+is known to drop for every member.
 
 Recommendations:
 
