@@ -13,12 +13,39 @@ What goes into the estimate:
 - kill and drop quests: expected kills (not rounded up), drop rate, required count, travel, and respawn
   waits from server data. The number of targets up is spawn points x chance (some points spawn one of
   several creatures);
-- picking up objects: the object's own respawn time and the chance it gives the item;
+- items per loot from the server's loot tables (a termite mound gives 1-20 termites), and the camp with the
+  shortest time when the nearest one would make you wait for respawns;
+- picking up objects: the object's own respawn time and the chance it gives the item; objects sharing the same
+  spawn points (the Un'Goro crystals) are gathered in one sweep;
+- orange quests (3 or 4 levels above you): fight and rest +25 % / +50 % (+2 / +5 s rest per kill when you
+  never rest); deaths are not counted;
+- random drops are not farmed: the item that starts the quest, or a drop that 32+ creature types give at
+  under 15 % (the Green Hills pages, OOX beacons), takes no time; such a quest is not rated until you hold the
+  item (不評分: "需要隨機掉落的物品，拿到後才評分");
+- quest XP from the client's QuestXP table (WoW Forever build 1.60.1.71139);
+- one level range for every calculation (route sharing, chains, dungeon companions, maps): quests at full XP
+  (not 6+ levels below you), at most 4 levels above you, and below max level no level-60 quest. A quest 5+
+  levels above you is always 很低 ("超過等級範圍");
+- route sharing: only with nearby quests in your level range that are not rated 很低 themselves (their chain
+  value counted);
+- mobs on the way: cleared when dense; elites only when their area reaches the quest's own points (an elite
+  area you fight into), not those passed on the way;
 - escorts: the escorted NPC's path and walking speed;
-- your own pace: your measured solo fight time and the gap between fights (recorded in game) are used
-  once there are enough samples; until then a default is used;
+- your own pace: your measured solo fight time (once there are 5 fights) and your rest per kill, recorded
+  in game. Rest is the time you stand still out of combat between two solo fights with health (or mana)
+  below full, the loot window closed, whatever else you do meanwhile; it is the mean over your newest 60
+  kills, and below 30 kills the missing ones take your character's mean over all levels, else the default
+  (3 s per kill, from WoW Forever questing videos). A kill costs fight + loot + rest + the walk to it;
+- walking between targets: the spacing of the camp's spawn points; a stealthed target (stealth aura in the
+  server data) is not seen from afar, so its points are walked to in turn;
 - travel: walking, or a flight when quicker (walk to a flight master of your faction, the flight along the
-  client's flight paths from OneForAll's data, walk on), or a ship. Below mount level the hostile mobs within
+  client's flight paths from OneForAll's data, walk on; a map without a flight point uses the nearest ones;
+  every flight point is taken as already learned),
+  or a ship (between the continents, Rut'theran - Auberdine, Grom'gol - Undercity; to and from the docks
+  walking or flying as any leg). You ride once you have riding (a WoW Forever mount quest turned in, a riding
+  skill, or mounted now), else walk. Walks go around mountains, cliffs and city
+  walls traced on the zone maps, swim across water at swimming speed, cross rock-pillar ground at 70 % speed,
+  and pass between zones through their connections. On foot the hostile mobs within
   20 yd of the way that cannot be slipped past (another one within 40 yd) are fought, and at a camp the other
   hostile mobs beside the targets are cleared along with them, mounted or not;
 - shared route: in the rating, nearby quests you can do along the way, including ones you have not taken
@@ -65,16 +92,25 @@ is known to drop for every member.
 Recommendations:
 
 - dungeons: one run's kill XP plus the dungeon quests you can do in it, per hour of the run itself (the
-  trip there is not counted; dungeon kill XP 60 %), ranked against the XP per hour of the maps that fit your
-  level (as in the map recommendation). The level range is the game's dungeon
-  finder range; outside it the dungeon is shown as not recommended. Shown in OneForAll's dungeon map
-  pin tooltips (needs OneForAll) and listed by `/qr dungeons`;
-- maps: the open-world quests you can take on a zone map (quests without XP or with almost none left
-  out), grouped into hubs (quests share the route inside a hub plus a walk between them; a tour between
-  hubs; the trip to the map is not counted). Two ranks against the other maps that fit your level, combined so that a map weak in either is not good:
-  the XP per hour of doing them all (scattered quests take longer) and how many there are. Maps more than 4 levels above you or
-  without XP are not rated. Shown on the world map under OneForAll's zone level, and after the level
-  when hovering a zone on a continent map.
+  trip there is not counted; dungeon kill XP 60 %), rated like a map: as R against grinding on the map
+  standard at your pace. The run time is measured from real clears and does not change with your pace. The
+  level range is the game's dungeon finder range; outside it the dungeon is shown as not recommended. Shown
+  in OneForAll's dungeon map pin tooltips (needs OneForAll) and listed by `/qr dungeons`;
+- dungeons: a wing's run with its quests you can still do, plus their follow-ups that are talks or one short
+  fight (e.g. the Platinum Discs, The Unsent Letter -> Bazil Thredd, Marshal Windsor's chain back to the
+  Stormwind events), cut where a step needs another fighting area or dungeon;
+- maps: all the rated open-world quests you can take on a zone map at full XP (not 6+ levels below you), at
+  most 4 levels above you, never a level-60 quest and none that needs a random drop you do not hold, grouped into hubs (each quest with the
+  time its own rating uses, plus a walk between them inside a hub and a tour between hubs). Their XP over
+  their hours and walks, times the quantity H / (H + trip): H the hours of the quests rated 中 or better
+  (their own time), the trip from the map you are on (main hub to main hub, walking or riding, flights and ships;
+  on the map itself only the way out, to the nearest flight master or map; left out inside a dungeon), is rated as R against grinding on the map standard at your pace: the quests' standard with
+  its band edges times the typical reductions of a map, its quests' concentration (the walks between them) and
+  quantity (the trip), each the median over all maps and levels, on foot or mounted as you travel. Maps are
+  not compared with each other, and a map whose good quests take about as long as getting there is worth half its rate. A
+  map with open quests but none rated 中 or better is 很低. Maps more than 4 levels above you or without XP
+  are not rated. Shown on the world map under OneForAll's zone level, and after the level when hovering a
+  zone on a continent map.
 
 Where it shows: Questie's tracker (the rating only; hover the quest title for the reasons) and map icon
 tooltips, the world map quest log, the quest offer window, and the quest log and map quest detail pages
@@ -86,7 +122,8 @@ Copy or clone this folder into `World of Warcraft/_forever_/Interface/AddOns/Que
 
 ## Commands
 
-- `/qr` opens the settings.
+- `/qr` (or the minimap button) opens a window with your measured pace (fight time, rest, records per
+  level) and the settings; drag the button to move it around the minimap.
 - `/qr log` lists the rating of every quest in your log.
 - `/qr debug <questID>` prints each step of the calculation.
 - `/qr dungeons` lists the dungeon recommendations and the dungeon finder's level ranges.

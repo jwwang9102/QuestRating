@@ -1,7 +1,7 @@
 local _, QR = ...
 local L = QR.L
 
--- Settings page (Esc > Options > AddOns > QuestRating, or /qr): display switches and the main
+-- Settings page (Esc > Options > AddOns > QuestRating, and the minimap button's window): display switches and the main
 -- estimate assumptions. Plain frames on a canvas, like Questie registers its own pages.
 local O = {}
 QR.Options = O
@@ -12,6 +12,7 @@ local controls = {} -- refresh functions
 local function changed()
     QR.InvalidateQuest()
     if QR.UI and QR.UI.Refresh then QR.UI.Refresh() end
+    if QR.Panel and QR.Panel.ApplyMinimap then QR.Panel.ApplyMinimap() end
 end
 
 local function header(parent, text, y)
@@ -35,14 +36,22 @@ local function checkbox(parent, label, key, y)
     return y - 30
 end
 
+-- Layout of a number row (user 2026-11-26: long labels ran under the boxes): the label wraps inside LABEL_W and
+-- the boxes start at BOX_X, right of it; the threshold row's four boxes end inside the window (610 px).
+local LABEL_X, LABEL_W, BOX_X, BOX_W = 20, 330, 360, 70
+local TH_W, TH_STEP = 56, 62
+
 -- number box; get/set let one row edit a value inside a table (thresholds)
 local function numberBox(parent, label, y, get, set)
     local fs = parent:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-    fs:SetPoint("TOPLEFT", 20, y - 4)
+    fs:SetPoint("TOPLEFT", LABEL_X, y - 4)
+    fs:SetWidth(LABEL_W)
+    fs:SetJustifyH("LEFT")
+    fs:SetWordWrap(true)
     fs:SetText(label)
     local eb = CreateFrame("EditBox", nil, parent, "InputBoxTemplate")
-    eb:SetSize(70, 20)
-    eb:SetPoint("TOPLEFT", 300, y)
+    eb:SetSize(BOX_W, 20)
+    eb:SetPoint("TOPLEFT", BOX_X, y)
     eb:SetAutoFocus(false)
     local function commit(self)
         local v = tonumber(self:GetText())
@@ -61,7 +70,8 @@ local function numberBox(parent, label, y, get, set)
     end)
     eb:SetScript("OnEscapePressed", function(self) self:SetText(tostring(get())); self:ClearFocus() end)
     controls[#controls + 1] = function() eb:SetText(tostring(get())) end
-    return y - 26, eb
+    -- a wrapped label makes the row taller
+    return y - math.max(26, math.ceil(fs:GetStringHeight() or 0) + 12), eb
 end
 
 local function keyBox(parent, label, key, y, lo, hi)
@@ -72,16 +82,21 @@ local function keyBox(parent, label, key, y, lo, hi)
     end))
 end
 
-local function build()
-    local panel = CreateFrame("Frame")
-    panel:Hide()
+-- The settings controls on panel (a new hidden frame when nil): the game's settings page and the minimap
+-- button's window (Panel.lua) build the same controls. Returns the panel and the height used.
+local function build(panel, noTitle)
+    panel = panel or CreateFrame("Frame")
+    if not noTitle then panel:Hide() end
     local y = -16
-    local title = panel:CreateFontString(nil, "ARTWORK", "GameFontNormalHuge")
-    title:SetPoint("TOPLEFT", 16, y)
-    title:SetText(L.OPT_TITLE)
-    y = y - 40
+    if not noTitle then
+        local title = panel:CreateFontString(nil, "ARTWORK", "GameFontNormalHuge")
+        title:SetPoint("TOPLEFT", 16, y)
+        title:SetText(L.OPT_TITLE)
+        y = y - 40
+    end
 
     y = header(panel, L.OPT_DISPLAY, y)
+    y = checkbox(panel, L.OPT_SHOW_MINIMAP, "showMinimap", y)
     y = checkbox(panel, L.OPT_SHOW_TRACKER, "showTracker", y)
     y = keyBox(panel, L.OPT_TRACKER_REASONS, "trackerReasons", y, 0, 2)
     y = checkbox(panel, L.OPT_SHOW_TOOLTIP, "showTooltip", y)
@@ -94,6 +109,7 @@ local function build()
     y = keyBox(panel, L.OPT_MOUNT, "mountSpeed", y, 1)
     y = keyBox(panel, L.OPT_RESPAWN, "respawn", y, 0)
     y = keyBox(panel, L.OPT_FIGHT, "fightBase", y, 1)
+    y = keyBox(panel, L.OPT_REST, "restPerKill", y, 0, 32) -- the standard grid ends at 32
     y = keyBox(panel, L.OPT_SHARE, "shareFactor", y, 0.05, 1)
     y = keyBox(panel, L.OPT_NEARBY_RADIUS, "nearbyRadius", y, 0, 300) -- the database list is built at 300 yd
     y = keyBox(panel, L.OPT_NEARBY_CAP, "nearbyCap", y, 1)
@@ -101,9 +117,10 @@ local function build()
     y = keyBox(panel, L.OPT_GEAR_BIG, "gearBig", y, 0)
     y = keyBox(panel, L.OPT_GEAR_OFFSET, "gearLevelOffset", y, 0)
 
+    local thY = y
     for i = 1, 4 do
         -- only the first box shows the row label
-        local _, eb = numberBox(panel, i == 1 and L.OPT_THRESHOLDS or "", y, function() return QR.Cfg().thresholds[i] end,
+        local ny, eb = numberBox(panel, i == 1 and L.OPT_THRESHOLDS or "", y, function() return QR.Cfg().thresholds[i] end,
             function(v)
                 -- keep the bands in order: between the neighbouring thresholds
                 local t = QR.Cfg().thresholds
@@ -112,9 +129,11 @@ local function build()
                 t[i] = v
             end)
         eb:ClearAllPoints()
-        eb:SetPoint("TOPLEFT", 300 + (i - 1) * 78, y)
+        eb:SetWidth(TH_W)
+        eb:SetPoint("TOPLEFT", BOX_X + (i - 1) * TH_STEP, y)
+        if i == 1 then thY = ny end
     end
-    y = y - 36
+    y = thY - 10
 
     local reset = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
     reset:SetSize(140, 24)
@@ -130,8 +149,9 @@ local function build()
     end)
 
     panel:SetScript("OnShow", function() O.Refresh() end)
-    return panel
+    return panel, 16 - (y - 24)
 end
+O.Build = build
 
 function O.Refresh()
     for _, fn in ipairs(controls) do fn() end

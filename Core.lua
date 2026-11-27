@@ -9,13 +9,20 @@ QR.DEFAULTS = {
     fightMinFactor = 0.6,   -- level factor clamp
     fightMaxFactor = 2.5,
     fightPerLevel = 0.12,   -- level factor per level of difference
+    -- an orange quest, by its level above you (user 2026-11-27): fight and rest x this; with no rest at all,
+    -- orangeRest seconds of rest per kill instead (deaths are not counted)
+    orangeFight = { [3] = 1.25, [4] = 1.5 },
+    orangeRest = { [3] = 2, [4] = 5 },
     eliteFactor = 3,
     rareFactor = 2,
     lootTime = 4,           -- seconds per kill to loot
+    restPerKill = 3,        -- seconds of rest per kill until KillTimer has your own (mean of 8 solo WoW Forever
+                            -- questing videos, levels 13-54, 2026-11-26: 0 to 5.9 by class)
     objectLootTime = 6,     -- seconds per object (herb, chest...)
     walkSpeed = 7,          -- yards per second, on foot (also between kills)
+    swimSpeed = 4.722,      -- yards per second, swimming (the game's base swim speed; terrain water legs)
     mountSpeed = 11.2,      -- yards per second, 60% mount (travel legs)
-    mountLevel = 40,        -- travel legs use the mount from this level ("auto")
+    mountLevel = 40,        -- "auto": the mount once you have riding (E.HasRiding); this level only as a fallback
     speedMode = "auto",     -- "auto" | "walk" | "mount"
     flightMinYards = 2000,  -- longer travel legs may use a flight path instead
     flightSpeed = 30,       -- yards per second on a flight path
@@ -36,6 +43,7 @@ QR.DEFAULTS = {
     gearBig = 10,           -- from this %: +2 levels; in between +1 (user)
     gearLevelOffset = 5,    -- quest gear for level L has item level about L + this (gear standard above your level)
     -- display
+    showMinimap = true,     -- minimap button (statistics and settings window)
     showTracker = true,     -- rating tag after quest titles in Questie's tracker
     trackerReasons = 0,     -- reasons in the tag: 0 none (default: they are in the hover tooltip), 1, 2
     showTooltip = true,     -- QuestRating tooltip when hovering a tracker line

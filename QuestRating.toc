@@ -19,4 +19,5 @@ UI.lua
 MapUI.lua
 Blizzard.lua
 Options.lua
+Panel.lua
 Debug.lua

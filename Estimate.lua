@@ -1,6 +1,6 @@
 local _, QR = ...
 
--- Pure time-efficiency math. No game API calls here; _tools/build_questrating_data.py mirrors every
+-- Time-efficiency math. The only game API calls are E.HasRiding's; _tools/build_questrating_data.py mirrors every
 -- function (objective_time, rate, dungeon_quest_plan, rate_dungeon, chain_rate). Units: seconds, yards, XP.
 local E = {}
 QR.Estimate = E
@@ -12,10 +12,48 @@ function E.WalkSpeed(cfg)
     return cfg.walkSpeed
 end
 
--- Travel legs (giver -> targets -> finisher): mount from mountLevel in "auto" mode.
+-- Riding (user 2026-11-26: "whether you ride depends on having learned riding, not only the level"): mounted
+-- now, a WoW Forever riding quest turned in (OneForAll's group of the "Your First ..." mount quests: the riding
+-- skill comes with them), or a riding skill line. Checked at most every 5 s until found; riding is not lost, so
+-- once found it stays, and the ratings are redone (review 2026-11-26: a rating cached on foot kept the walk).
+local RIDING_QUESTS = { 95511, 96982, 96989, 96994, 96996, 96997, 97017, 97045, 97046, 97171, 97446, 98166, 99326 }
+local RIDING_SKILL = { ["Riding"] = true, ["騎術"] = true, ["騎乘"] = true }
+local ridingAt, riding = -10, false
+local function questDone(id)
+    if C_QuestLog and C_QuestLog.IsQuestFlaggedCompleted then return C_QuestLog.IsQuestFlaggedCompleted(id) end
+    return IsQuestFlaggedCompleted and IsQuestFlaggedCompleted(id)
+end
+local function found()
+    riding = true
+    if QR.InvalidateRatings then QR.InvalidateRatings() end
+    return true
+end
+function E.HasRiding()
+    if riding then return true end
+    local now = GetTime and GetTime() or 0
+    if now - ridingAt < 5 then return false end
+    ridingAt = now
+    if IsMounted and IsMounted() then return found() end
+    for _, id in ipairs(RIDING_QUESTS) do
+        if questDone(id) then return found() end
+    end
+    if GetNumSkillLines and GetSkillLineInfo then
+        for i = 1, GetNumSkillLines() do
+            local name, isHeader = GetSkillLineInfo(i)
+            if name and not isHeader and RIDING_SKILL[name] then return found() end
+        end
+    end
+    return false
+end
+
+-- Travel legs (giver -> targets -> finisher): in "auto" mode the mount once you have riding (E.HasRiding);
+-- mountLevel only if the riding check itself fails (it does not in the game client).
 function E.TravelSpeed(cfg, playerLevel)
-    if cfg.speedMode == "mount" or (cfg.speedMode == "auto" and (playerLevel or 0) >= cfg.mountLevel) then
-        return cfg.mountSpeed
+    if cfg.speedMode == "mount" then return cfg.mountSpeed end
+    if cfg.speedMode == "auto" then
+        local ok, has = pcall(E.HasRiding)
+        if ok then return has and cfg.mountSpeed or cfg.walkSpeed end
+        if (playerLevel or 0) >= cfg.mountLevel then return cfg.mountSpeed end
     end
     return cfg.walkSpeed
 end
@@ -101,8 +139,8 @@ E.GROUP_RATE = GROUP_RATE
 function E.Objective(obj, playerLevel, cfg, party)
     local r = { K = 0, S = 0, A = 0, d = 0, tKill = 0, wait = 0, T = 0, xp = 0, p = obj.p }
     local kind = obj.kind
-    if kind == "event" or kind == "vendor" or kind == "none" or (obj.N or 0) <= 0 then
-        return r
+    if kind == "event" or kind == "vendor" or kind == "none" or (obj.N or 0) <= 0 or obj.incidental then
+        return r -- incidental: a random drop / the quest's starter item, held when you do it (the build's random_drop)
     end
     -- drops and items from objects use their chance; an object without one gives the item (most known
     -- object chances are 100 %). Kills and object uses always count.
@@ -116,7 +154,7 @@ function E.Objective(obj, playerLevel, cfg, party)
     end
     -- expected kills and respawn waves (no rounding up: an 80 % drop of a single mob waits a quarter of a
     -- respawn on average, not a whole one)
-    r.K = obj.N * mul / p
+    r.K = obj.N * mul / (p * (obj.perLoot or 1)) -- perLoot: items per loot (the build's LOOT_COUNT)
     if obj.synthetic or not obj.S then
         -- location unknown / spawns incomplete: grinding density, no respawn limit
         r.S, r.A, r.d = 0, 0, cfg.grindDistance
@@ -135,7 +173,7 @@ function E.Objective(obj, playerLevel, cfg, party)
             fight = fight / (party.n - 1)
             xp = xp * GROUP_RATE[party.n] / party.n
         end
-        r.tKill = fight + select(2, E.GapTerms(cfg)) + walk
+        r.tKill = fight + select(2, E.GapTerms(cfg, party)) + walk
         r.xp = xp * r.K
     end
     if not (obj.synthetic or not obj.S) then
@@ -150,7 +188,7 @@ function E.Objective(obj, playerLevel, cfg, party)
         local a = 0
         if obj.altPer and (kind == "kill" or kind == "item") and not obj.fromObject then
             a = obj.altPer * (E.FightTime(obj.mobLevel, playerLevel, "normal", cfg) / (party and (party.n - 1) or 1)
-                + select(2, E.GapTerms(cfg)))
+                + select(2, E.GapTerms(cfg, party)))
         end
         r.wait = max(0, waves - 1) * max(0, (obj.rs or (QR_GEN and QR_GEN.respawn) or cfg.respawn) - effS * (r.tKill + a))
         if a > 0 and r.K > effS then
@@ -169,7 +207,7 @@ function E.Objective(obj, playerLevel, cfg, party)
     local trT = 0
     if obj.trash then
         local RANKS = { [0] = "normal", [1] = "elite", [2] = "rare" }
-        local _, gapNoWalk = E.GapTerms(cfg)
+        local _, gapNoWalk = E.GapTerms(cfg, party)
         for i = 1, #obj.trash - 2, 3 do
             local lv, rank, per = obj.trash[i], obj.trash[i + 1], obj.trash[i + 2]
             if lv > E.GrayLevel(playerLevel) and lv < playerLevel + 5 then -- grey / red (build: RED_LEVELS)
@@ -201,6 +239,16 @@ function E.Quest(model, playerLevel, cfg, nearby, party)
         end
         return best
     end
+    -- an orange quest (user 2026-11-27, by the quest's level): 3 levels above you +25 % fight and rest, 4 levels
+    -- +50 % (cfg.orangeFight); with no rest at all, cfg.orangeRest seconds per kill instead. Mirror of the build's rate.
+    local d = (model.level or 0) - playerLevel
+    local of = cfg.orangeFight and cfg.orangeFight[d]
+    if of then
+        local rest0 = cfg.rest or cfg.restPerKill or 0
+        cfg = setmetatable({ fightBase = cfg.fightBase * of,
+                             rest = rest0 > 0 and rest0 * of or (cfg.orangeRest and cfg.orangeRest[d] or 0) },
+                           { __index = cfg })
+    end
     local res = { Tfarm = 0, mobXP = 0, wait = 0, objectives = {}, groups = {}, party = party and party.n }
     for gi, group in ipairs(model.groups) do
         local best
@@ -227,7 +275,8 @@ function E.Quest(model, playerLevel, cfg, nearby, party)
             tEscort = tEscort + lg.seconds -- at the NPC's pace, not shared with nearby quests
         else
             -- ship / zeppelin legs carry their time (average wait + crossing), walks their yards
-            tRoute = tRoute + (lg.seconds or E.LegTime(lg.yards, cfg, playerLevel, true))
+            tRoute = tRoute + (lg.seconds or (lg.swim and lg.yards / (cfg.swimSpeed or 4.722))
+                or E.LegTime(lg.yards, cfg, playerLevel, true))
         end
     end
     -- hostile mobs along the walked legs (user 2026-11-25: a tunnel full of mobs lengthens the walk), fought on
@@ -236,7 +285,7 @@ function E.Quest(model, playerLevel, cfg, nearby, party)
     local clearXP = 0
     if rc and E.TravelSpeed(cfg, playerLevel) == cfg.walkSpeed and not model.ready then
         local RANKS = { [0] = "normal", [1] = "elite", [2] = "rare" }
-        local _, gapNoWalk = E.GapTerms(cfg)
+        local _, gapNoWalk = E.GapTerms(cfg, party)
         for i = 1, #rc - 2, 3 do
             local lv, rank, n = rc[i], rc[i + 1], rc[i + 2]
             if lv > E.GrayLevel(playerLevel) and lv < playerLevel + 5 then -- grey: no XP; red (5+ above): avoided
@@ -444,13 +493,16 @@ function E.Dungeon(model, playerLevel, cfg, companions)
     return res
 end
 
--- Gap per kill (loot, rest, walk) in the baseline, and its non-walking part for quest kills. Default: loot +
--- the grinding walk. With cfg.gap (your measured median, KillTimer) the measured gap; its walking part is
--- taken as the grinding walk (an assumption, review 2026-11-23). Mirror of the build's gap_terms.
-function E.GapTerms(cfg)
+-- Gap per kill in the baseline (loot + rest + the grinding walk), and its non-walking part for every other
+-- kill (loot + rest; a quest kill adds its own walk). Rest: measured in game (cfg.rest, KillTimer K.Rest:
+-- standing still while recovering, user 2026-11-26), else the setting restPerKill. In a party it is split
+-- like the fight time (party.n - 1: a healer). Mirror of the build's gap_terms.
+function E.GapTerms(cfg, party)
     local walk = cfg.grindDistance / E.WalkSpeed(cfg)
-    if not cfg.gap then return cfg.lootTime + walk, cfg.lootTime end
-    return cfg.gap, max(0, cfg.gap - walk)
+    local rest = cfg.rest or cfg.restPerKill or 0
+    if party then rest = rest / (party.n - 1) end
+    local noWalk = cfg.lootTime + rest
+    return noWalk + walk, noWalk
 end
 
 function E.Baseline(playerLevel, cfg)

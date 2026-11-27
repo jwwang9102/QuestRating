@@ -16,7 +16,7 @@ local function word(level)
     return UI.colorize(L.RATING[level], UI.COLOR[level] or UI.GRAY)
 end
 
--- Map ratings change only with the quest log, level or gear: a short cache keeps hovering cheap.
+-- Map ratings change with the quest log, level, gear, your measured pace and the map you are on: a short cache keeps hovering cheap.
 local zoneCache, zoneStamp = {}, 0
 local function zoneRating(uiMap)
     local now = GetTime()
@@ -54,7 +54,14 @@ local function updateZoneText()
     local id = WorldMapFrame:IsShown() and WorldMapFrame:GetMapID()
     local r = id and isZoneMap(id) and zoneRating(id)
     if r then
-        zoneText:SetText(string.format(L.MAP_REC_DETAIL, word(r.level), r.quests, r.good))
+        if r.quests == 0 then
+            zoneText:SetText(string.format(L.MAP_REC_NONE, word(r.level)))
+        else
+            local move = r.here and string.format(L.MAP_REC_MOVE_HERE, math.floor((r.travel or 0) / 60 + 0.5))
+                or r.travel == nil and (r.located and L.MAP_REC_MOVE_NONE or L.MAP_REC_MOVE_UNKNOWN)
+                or string.format(L.MAP_REC_MOVE, math.floor(r.travel / 60 + 0.5))
+            zoneText:SetText(string.format(L.MAP_REC_DETAIL, word(r.level), r.quests, math.floor(r.T / 60 + 0.5), move))
+        end
         zoneFrame:Show()
     else
         zoneFrame:Hide()
@@ -97,7 +104,10 @@ local function labelHook(label)
     extra:ClearAllPoints()
     local after = (label.ofaRange and label.ofaRange:IsShown()) and label.ofaRange or fs
     extra:SetPoint("LEFT", after, "RIGHT", 6, 1)
-    extra:SetText(string.format(L.MAP_REC, word(r.level)))
+    -- with the quantity behind it (review 2026-11-26: a map of a few minutes of quests can be very high)
+    extra:SetText(string.format(L.MAP_REC, word(r.level))
+        .. (r.quests > 0 and string.format(L.MAP_REC_QTY, r.quests, math.floor(r.T / 60 + 0.5)) or "")
+        .. (r.travel == nil and L.MAP_REC_NO_MOVE_TAG or ""))
     extra:Show()
 end
 local labelHooked = false

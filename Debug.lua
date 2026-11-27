@@ -19,9 +19,13 @@ local function debugQuest(questId)
     local fb, nfb = QR.Kill.FightBase(res.playerLevel)
     local gp, ngp = QR.Kill.Gap(res.playerLevel)
     out("戰鬥時間：%s（單刷紀錄 %d 筆，等級 %d-%d）", fb and string.format("%.1f 秒/隻，實測中位數", fb)
-        or string.format("%d 秒，設定值（紀錄未滿 5 筆）", QR.Cfg().fightBase), nfb, res.playerLevel - 2, res.playerLevel)
-    out("戰鬥間隔：%s（紀錄 %d 筆；含換點和交任務的跑路，連續打怪時才準）", gp and string.format("%.1f 秒/隻，實測中位數", gp)
-        or "設定值（撿取＋走路）", ngp)
+        or string.format("%d 秒，設定值（紀錄未滿 5 筆）", QR.Cfg().fightBase), nfb, math.max(1, res.playerLevel - 2), res.playerLevel)
+    out("戰鬥間隔：%s（紀錄 %d 筆；含換點和交任務的跑路，只供參考，估算不用）", gp and string.format("%.1f 秒/隻，實測中位數", gp)
+        or "尚無紀錄", ngp)
+    local rs, nrs, src = QR.Kill.Rest(res.playerLevel, QR.Cfg().restPerKill)
+    out("休息：%.1f 秒/隻（%s；實測 %d 隻，等級 %d-%d，滿 %d 隻後只用實測）", rs,
+        src == "measured" and "實測平均" or src == "character" and "不足的部分用本角色各等級平均" or "不足的部分用設定值",
+        nrs, math.max(1, res.playerLevel - 2), res.playerLevel, QR.Kill.REST_KILLS)
     if m.xpFromClient then out("任務經驗取自遊戲（日誌中的任務一律用遊戲的數值）") end
     if m.dungeonFromTag then out("副本任務：依遊戲的任務類型判定") end
     if res.prereqZone then out("副本前置：區域 %d（後續第 %d 個任務）", res.prereqZone, res.prereqDepth or 0) end
@@ -73,6 +77,8 @@ local function debugQuest(questId)
             legs[#legs + 1] = string.format("%s %s %.0f秒", name, L.LEG_BOAT, lg.seconds)
         elseif lg.flight then
             legs[#legs + 1] = string.format("%s %s %.0f秒", name, L.LEG_FLIGHT, lg.seconds)
+        elseif lg.swim then
+            legs[#legs + 1] = string.format("%s %s %.0f碼", name, L.LEG_SWIM, lg.yards)
         elseif lg.escort then
             legs[#legs + 1] = string.format("%s %s %.0f秒", name, L.LEG_ESCORT, lg.seconds)
         else
@@ -172,8 +178,8 @@ SlashCmdList.QUESTRATING = function(msg)
         if not QR.dropTrace then QR.Print("drop: no map icon tooltip rendered since login"); return end
         QR.Print("drop: last map icon tooltip")
         for _, line in ipairs(QR.dropTrace) do out("%s", line) end
-    elseif cmd == "" and QR.Options and QR.Options.Open then
-        QR.Options.Open()
+    elseif cmd == "" and QR.Panel then
+        QR.Panel.Toggle()
         QR.Print(L.MSG_HELP)
     else
         QR.Print(L.MSG_HELP)

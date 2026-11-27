@@ -9,18 +9,21 @@ local D = QR.Data
 
 local modelCache = {} -- [questId] = model | { fail = reason }
 local rateCache = {}  -- [questId] = { res, why } for the UI (tracker titles are redrawn often)
-local wingCache = {}  -- [wing] = dungeon recommendation (depends on level and the quests of the run)
+local wingCache = {}  -- [wing] = dungeon recommendation (depends on level, the quests of the run and your pace)
+local vlowCache = {}  -- [id:level] = a neighbour rated very low (veryLowNeighbour)
 
 function QR.InvalidateQuest(questId)
     if questId then modelCache[questId] = nil else wipe(modelCache) end
     wipe(rateCache) -- ratings depend on other quests (nearby, chains), so drop them all
     wipe(wingCache) -- level ups and quest events change the level range check and the run's quests
+    wipe(vlowCache)
 end
 
 -- Ratings that only change with gear, talents or settings (models stay valid).
 function QR.InvalidateRatings()
     wipe(rateCache)
     wipe(wingCache)
+    wipe(vlowCache)
 end
 
 local function getModel(questId)
@@ -43,13 +46,28 @@ local function maxLevel()
     return (GetMaxPlayerLevel and GetMaxPlayerLevel()) or 60
 end
 
+-- In your level range (user 2026-11-27: every calculation uses only the quests in the level range): not grey, its
+-- XP not cut (6+ levels below you, D.QuestXP), at most 4 above you (5+ is red: out of range), and below max level
+-- not a max-level quest. Level -1 / 0 follows you: in. Mirror of the build's in_range.
+local function inRange(lv, xl, pl)
+    lv = lv or 0
+    if lv <= 0 then return true end
+    if E.QuestGray(lv, pl) then return false end
+    xl = (xl and xl > 0) and xl or lv
+    if xl < pl - 5 then return false end
+    return lv < pl + 5 and (pl >= maxLevel() or lv < maxLevel())
+end
+QR.InRange = inRange
+
 local completed, inLogQuest, openToYou -- below
 
 -- Other quests near this one (database rec.nb: main point within the build's nearbyRadius, 300 yd) that you
 -- can do along: taken or takeable now, not done, not exclusive with this one (user 2026-11-23: quests not
 -- taken share the route too). Mirror of the build's nearby_count.
 -- pl: the level the quest is done at (a follow-up in a chain: its own level), default yours
-local function countNearby(model, cfg, pl)
+local veryLowNeighbour -- below
+local rawNearby = false -- while judging a neighbour: its estimate and chain with the usual sharing (the build's _P1)
+local function countNearby(model, cfg, pl, raw)
     local rec = D.Record(model.id)
     if not model.center or not rec or not rec.nb then return 0, {} end
     pl = pl or UnitLevel("player") or 1
@@ -63,7 +81,8 @@ local function countNearby(model, cfg, pl)
             for _, x in ipairs(orec.ex or {}) do if x == model.id then mine = true end end
             local c = orec.c
             local d = (not mine) and c and model.center and E.Dist(model.center, { inst = c[1], x = c[2], y = c[3] })
-            if d and d <= cfg.nearbyRadius then list[#list + 1] = id end
+            -- a very low neighbour is not done along (user 2026-11-27; the build's very_low): raw = the count without it
+            if d and d <= cfg.nearbyRadius and (raw or rawNearby or not veryLowNeighbour(id, pl, cfg)) then list[#list + 1] = id end
         end
     end
     return #list, list
@@ -130,7 +149,7 @@ end
 function openToYou(id, rec, pl)
     if not (D.Available(rec) and not completed(id)) then return false end
     if inLogQuest(id) then return true end
-    if (rec.ml or 0) > pl or E.QuestGray(rec.lv, pl) then return false end
+    if (rec.ml or 0) > pl or not inRange(rec.lv, rec.xl, pl) then return false end -- the level range (inRange)
     for _, x in ipairs(rec.ex or {}) do -- an exclusive sibling done or taken
         if completed(x) or inLogQuest(x) then return false end
     end
@@ -168,7 +187,7 @@ local function runCompanions(model, pl, cfg, all)
             end
             if blocked and not met then return false end
         end
-        return inLogQuest(id) or ((rec.ml or 0) <= pl and not E.QuestGray(rec.lv, pl))
+        return (rec.ml or 0) <= pl and inRange(rec.lv, rec.xl, pl) -- the level range, also when in your log
     end
     local wing = model.run and model.run.wings[1]
     local list = wing and QR_GEN.wingQuests and QR_GEN.wingQuests[wing]
@@ -298,6 +317,7 @@ local function chainCost(questId, f, pl, cfg, top, forward)
     if not (rec and frec and D.Available(frec)) then return nil end
     local flv = (frec.lv or 0) > 0 and frec.lv or pl -- level -1 / 0 follows yours
     local lv = forward and math.min(top, math.max(pl, flv)) or math.max(1, math.min(pl, flv))
+    if not inRange(frec.lv, frec.xl, lv) then return nil end -- the level range (user 2026-11-27): the chain stops
     local est = soloEstimate(f, lv, cfg)
     local B = E.Baseline(lv, cfg)
     if not (est and B > 0) then return nil end
@@ -609,12 +629,19 @@ local function buildReasons(res, model, est, cfg)
             if not seen[c.text] then add(c.text); n = n + 1 end
         end
     end
+    -- drop rate and expected kills of every dropped item, whatever the rating (user 2026-11-26 "show it always")
+    for _, g in pairs(est.groups or {}) do
+        local obj = g.obj
+        if obj and obj.kind == "item" and not obj.fromObject and not obj.pUnknown and g.p and (g.K or 0) > 0 then
+            add(string.format(L.REASON_DROP, math.floor(g.p * 100 + 0.5), math.floor(g.K + 0.5)))
+        end
+    end
     -- route sharing, only when it raised the level
     -- (route sharing is efficiency, the general standard: no reason line for it, user 2026-11-22 / 11-23)
-    -- data reliability
+    -- data reliability (not "drop rate from emulator data": the same line on every such quest says nothing, user
+    -- 2026-11-27)
     for _, f in ipairs(model.flags) do
-        if f == L.DROP_UNKNOWN or f == L.COUNT_UNKNOWN or f == L.ROUTE_UNKNOWN or f == L.LOCATION_UNKNOWN or f == L.SPAWNS_INCOMPLETE
-            or f == L.DROP_EMULATED then
+        if f == L.DROP_UNKNOWN or f == L.COUNT_UNKNOWN or f == L.ROUTE_UNKNOWN or f == L.LOCATION_UNKNOWN or f == L.SPAWNS_INCOMPLETE then
             add(f)
         end
     end
@@ -664,6 +691,40 @@ local function maxReasons(res, pts, gearText, gear, T)
     return r
 end
 
+-- A neighbour rated very low at pl: its R with the usual route sharing (countNearby raw) below QR_GEN.nbCut[pl]
+-- (the build's very_low and NB_CUT, the same edge)
+function veryLowNeighbour(id, pl, cfg)
+    local cut = QR_GEN and QR_GEN.nbCut and QR_GEN.nbCut[pl]
+    if not cut then return false end
+    local key = id .. ":" .. pl
+    local v = vlowCache[key]
+    if v == nil then
+        v = false
+        vlowCache[key] = false -- while it is judged (a cycle through the chain counts it as not very low)
+        local m = getModel(id)
+        if m and not m.noData and not m.dungeon and #m.missing == 0 then
+            local prev = rawNearby
+            rawNearby = true
+            local ok, err = pcall(function()
+                local est = E.Quest(m, pl, cfg, (countNearby(m, cfg, pl, true)))
+                local B = E.Baseline(pl, cfg)
+                if est.T > 0 and B > 0 then
+                    est.XP = est.XP - (m.questXP or 0) + D.QuestXP(D.Record(id), pl)
+                    local R = est.XP / est.T * 3600 / B
+                    -- the value its rating uses: in a chain its best whole route (review rv5; the build's chain_R)
+                    local cH, cT, ids, back = chainEstimate(id, est, pl, cfg, B)
+                    if cH and cT > 0 and (#ids > 0 or #back > 0) then R = cH * 3600 / cT end
+                    v = R < cut
+                end
+            end)
+            rawNearby = prev
+            if not ok then v = false end
+        end
+        vlowCache[key] = v
+    end
+    return v
+end
+
 -- Returns a result table (all intermediate values kept for /qr debug), or nil, reason.
 function QR.Rate(questId)
     if not QR.ready then return nil, L.MSG_NOT_READY end
@@ -671,6 +732,13 @@ function QR.Rate(questId)
     local model, why = getModel(questId)
     if not model then return nil, why end
     local res = { questId = questId, model = model, playerLevel = UnitLevel("player") or 1 }
+    -- above your level range (5+ levels, red; user 2026-11-27 "a red quest is always very low, the reason: beyond the
+    -- level range"): before anything else, whatever data it has
+    if res.playerLevel < maxLevel() and (model.level or 0) >= res.playerLevel + 5 then
+        res.level, res.position, res.outOfRange = 0, 0, true
+        res.reasons = { string.format(L.REASON_OUT_OF_RANGE, model.level - res.playerLevel) }
+        return res
+    end
     -- a dungeon quest further down the chain: named in the reasons; the chain estimate decides its worth
     if not model.dungeon then
         local zone, depth = dungeonAhead(questId, cfg)
@@ -711,6 +779,32 @@ function QR.Rate(questId)
             if rec and rec.kq == "k" then
                 table.insert(res.reasons, 1, string.format(L.REASON_KEY_PLUS, L.KEY_KIND[rec.kw] or ""))
             end
+            return res
+        end
+    end
+    -- a quest started only by a random drop, or needing random drops (the build's random_drop; user 2026-11-27:
+    -- "never farmed on purpose"): rated once you hold them (their time is then 0), else not rated and left out of
+    -- the map recommendation
+    do
+        local rec = D.Record(questId)
+        local function count(item)
+            if not item then return 0 end
+            if GetItemCount then return GetItemCount(item) or 0 end
+            return C_Item and C_Item.GetItemCount and C_Item.GetItemCount(item) or 0
+        end
+        -- started by a random drop: rated once it is in your log or you hold the starter item (rec.si)
+        local need = rec and rec.ri == 1 and not model.inLog and count(rec.si) <= 0
+        for _, obj in ipairs(model.objectives) do
+            if obj.incidental == 1 and (obj.N or 0) > 0 and obj.countSource ~= "log" then
+                local have = count(obj.item)
+                if have < obj.N then need = true end
+            elseif obj.incidental == 1 and (obj.N or 0) > 0 then
+                need = true -- in your log and not done yet
+            end
+        end
+        if need then
+            res.noData, res.unrated = true, true
+            res.reasons = { L.REASON_UNRATED_RANDOM }
             return res
         end
     end
@@ -954,10 +1048,11 @@ end)
 ---------------------------------------------------------------------------------------------
 -- A dungeon wing at your level: one normal run's kill XP + the quests of that run you can do now (each by the
 -- part the route finishes, as in a dungeon quest's estimate) over the run time + the fixed travel + their talk
--- time. Ranked by its XP per hour among the maps that fit your level (QR_GEN.zdist, the maps' XP per hour of
--- doing their quests with the walks between them; user 2026-11-25 "compare with the maps": a run is a whole
--- stretch of time, like a map, not one quest without the walk to the next). Kill XP in dungeons: 60 % (user
--- 2026-11-25). Returns { level, xph, medianXph (the maps' median), quests, atMax } or nil.
+-- time. Rated like a map (user 2026-11-25 "compare with the maps"; 11-26 "rate the dungeons on the map
+-- standard"): its XP per hour as R against the grinding baseline at your pace, on the map standard (D.MapDist). The
+-- run time itself is measured from clears and does not follow your pace (user 2026-11-26). Kill XP in dungeons:
+-- 60 % (user 2026-11-25). Returns { level, xph, medianXph (the map standard's median XP per hour at your pace), quests,
+-- atMax } or nil.
 -- The level range of a wing: the client's dungeon finder (user 2026-11-23: "the built-in dungeon finder's
 -- range; too high or too low is not recommended"). LFGDungeons IDs (server hotfix table lfg_dungeons) -> our
 -- wings; the range is the finder's recommended levels (minRecLevel / maxRecLevel). A single level is no range
@@ -1060,28 +1155,75 @@ function rateWing(key)
                                   outside = true }
         end
     end
+    -- follow-ups of the run's quests that are talks or one short fight (user 2026-11-27: "a chain from an item a
+    -- boss drops, with several talk or very short fight follow-ups - the Platinum Discs, The Unsent Letter, the
+    -- Drakefire Amulet back to Stormwind - counts with the dungeon; cut where a step needs another fighting area
+    -- or dungeon"): along the chain (nq) while a step is in your level range, takeable at your level, not a
+    -- dungeon quest of another dungeon, not needing a random drop, and has only talk / event objectives or a single unique target
+    -- (one to get, one spawn); each with its own estimate, its walk included
+    do
+        local inComps, ownWing = {}, {}
+        for _, c in ipairs(comps) do inComps[c.id] = true end
+        for _, x in ipairs(QR_GEN.wingQuests and QR_GEN.wingQuests[key] or {}) do ownWing[x] = true end
+        local function shortStep(id, frec)
+            -- another dungeon: cut (a step inside this one, e.g. talking to the Discs in Uldaman, stays)
+            if (frec.dg == 1 and not ownWing[id]) or frec.ri == 1 then return false end
+            for _, o in ipairs(frec.o or {}) do
+                if o.inc == 1 then return false end -- a random drop (the starter item itself, inc 2, is held)
+                if o.k ~= 5 and not ((o.n or 0) <= 1 and (o.S or 0) <= 1) then return false end
+            end
+            return true
+        end
+        local function addFollow(id, depth, taken)
+            if depth > 8 then return end
+            for _, f in ipairs(followers(id)) do
+                local frec = f.rec
+                -- the level range, but a level-60 step still counts (user 2026-11-27: the Stormwind events after
+                -- Marshal Windsor's Blackrock Depths chain are level 60 and done at 58-59 with the run)
+                local inR = inRange(frec.lv, frec.xl, pl) or ((frec.lv or 0) >= maxLevel() and frec.lv < pl + 5
+                    and inRange(pl, frec.xl, pl))
+                local sibling = false -- an exclusive choice already counted: one of them only (review rv5)
+                for _, x in ipairs(frec.ex or {}) do if inComps[x] then sibling = true end end
+                if not inComps[f.id] and not sibling and (frec.ml or 0) <= pl and inR and shortStep(f.id, frec) then
+                    local est = soloEstimate(f.id, pl, cfg)
+                    if est then
+                        inComps[f.id] = true
+                        comps[#comps + 1] = { id = f.id, xp = est.XP, t = est.T, taken = taken or inLogQuest(f.id), open = true,
+                                              outside = true, follow = true }
+                        addFollow(f.id, depth + 1, taken or inLogQuest(f.id))
+                    end
+                end
+            end
+        end
+        local starts = {}
+        for _, c in ipairs(comps) do starts[#starts + 1] = c end
+        for _, c in ipairs(starts) do addFollow(c.id, 1, c.taken) end
+    end
     -- also the run with only the quests already in your log (user 2026-11-24: which quests to take, and the
     -- rating without them)
     local xp0, T0 = xp, T
     local need = {}
     for _, c in ipairs(comps) do
         xp, T = xp + c.xp, T + c.t
-        if c.taken then xp0, T0 = xp0 + c.xp, T0 + c.t elseif c.xp > 0 then need[#need + 1] = c
+        if c.taken then xp0, T0 = xp0 + c.xp, T0 + c.t
+        elseif c.follow then -- a follow-up of a quest not taken: comes with it, not one to take now
+        elseif c.xp > 0 then need[#need + 1] = c
         else xp0, T0 = xp0 + c.xp, T0 + c.t end -- (a quest the run gives no part of: not one to take for it)
     end
     local res = { quests = #comps, atMax = pl >= maxLevel(), key = key, T = T, lo = lo, hi = hi, finder = finder,
                   need = need }
     local Lc = math.max(1, math.min(59, pl))
-    local cuts = QR_GEN.zdist and QR_GEN.zdist[Lc]
+    local cuts, medR = D.MapDist(Lc, cfg)
+    local B = E.Baseline(Lc, cfg)
     local function level(x, t)
         local xph = t > 0 and x / t * 3600 or 0
         if res.atMax then return E.Level(2.0, 0), xph end
-        if not cuts then return nil, xph end
-        return E.Level(E.Position(xph, { thresholds = cuts }), 0), xph
+        if not cuts or B <= 0 then return nil, xph end
+        return E.Level(E.Position(xph / B, { thresholds = cuts }), 0), xph
     end
     res.level, res.xph = level(xp, T)
     res.levelTaken, res.xphTaken = level(xp0, T0)
-    res.medianXph = QR_GEN.zmed and QR_GEN.zmed[Lc] or nil
+    res.medianXph = medR and B > 0 and medR * B or nil
     if res.level == nil then res.noData = true end
     -- quests whose XP is not in the data (WoW Forever's new dungeons: Alcaz, Blackmaw, Shapers' Hall): the rating
     -- counts only what is known; when none of them has XP data it is not rated (review 2026-11-25: they showed
@@ -1098,21 +1240,31 @@ function rateWing(key)
     return res
 end
 
--- A map at your level (user 2026-11-23; not compared with grinding): its open-world quests you can take now
--- (quests without XP or with almost none, as rated, left out; a slow quest is not), in hubs (a map with two hubs
--- of many quests each is not "scattered"): the quests' main points grouped into hubs by greedy disc cover at
--- nearbyRadius (each hub at most 2 x radius across); inside a hub the quests share their own routes (divided by
--- min(nearbyCap, quests in the hub)) plus a walk between their main points; between hubs one tour (nearest
--- neighbour over the hub centres); the trip to the map is not counted (user 2026-11-24). Two ranks among the
--- maps that fit your level (user 2026-11-21 "by the number of quests and their ratings", 11-24 "also
--- concentration and distance", "no one-hour cap"): the XP per hour of doing them all (QR_GEN.zdist) and their
--- number (QR_GEN.zcount), each 0..4; the map's position is their geometric mean. A map fits when its quest levels
--- (QR_GEN.zlv, 20-80 %) are at most 4 above you and not all grey. Returns { level, xph, quests, good, hubs }
--- or nil (max level, the map does not fit, no standard, nothing to take). Mirror of the build's map_plan / ZDIST.
+-- A map at your level (user 2026-11-21 "by the number of quests in your level range and their ratings"; 11-24
+-- "concentration and the distance between quests"; 11-26 "maps are not compared with each other: the quests are
+-- the standard", "the quantity against the travel between maps: the closer the total hours come to the travel
+-- between maps, the less it is recommended; the hours count only quests rated mid or better"; 11-27 "only the
+-- quantity counts mid or better"): every open-world quest you can take now with a rating (no XP or no data: left
+-- out), each with the time its own rating uses (its route shared with the quests nearby, as rated), in
+-- hubs (a map with two hubs of many quests each is not "scattered"): the quests' main points grouped by greedy
+-- disc cover at nearbyRadius (each hub at most 2 x radius across), plus a walk between the main points inside a
+-- hub and one tour between hubs (nearest neighbour over the hub centres). Their XP over their hours and walks,
+-- times the quantity H / (H + trip): H the hours of the quests rated mid or better (their own time, no walks), the
+-- trip from the map you stand on (user 2026-11-26 "use where you are now"; QR_GEN.zmove:
+-- main hub to main hub, walked / ridden yards at your travel speed plus flights, ships and swimming; on the map
+-- itself the time to leave it, QR_GEN.zleave: to the nearest flight master or map, user 2026-11-26 "only simply to
+-- the nearest flight point or neighbouring map, else the travel is counted twice"; all flight points are taken as
+-- known; unknown in a dungeon or with no map: left out, travel = nil), as R against the grinding baseline, on the map standard at your pace (D.MapDist: the quests' standard x the typical share of a
+-- map's time that is quest time, user 2026-11-26 "normalise the reductions"): a map whose
+-- mid-or-better quests take about as long as getting there is worth half. A map fits when its levels
+-- (QR_GEN.zlv) are at most 4 above you and not all grey. Returns { level, xph, quests (rated mid or better), good,
+-- hubs, T (= H), travel, open } (quests = 0: open quests but none rated mid or better, very low) or nil (max
+-- level, the map does not
+-- fit, no standard, nothing open).
 -- the zone map you are on: the first zone map up the parents of where you stand (a cave, a building, a dock or
 -- any other sub-map counts as its zone; user 2026-11-23: on Darkshore the map rating fell from "very high" to "very
 -- low" for a while: only micro maps were walked up, so another sub-map type, or no map during a load, read as
--- "not on this map"; the trip to a map is no longer counted, the map you are on is still reported). No map
+-- "not on this map"; the map rating's trip starts here, user 2026-11-26). No map
 -- for a moment (loading, a transition): the last zone seen. Inside a dungeon or on a continent: none.
 local lastZone
 local function playerZoneMap()
@@ -1132,17 +1284,21 @@ local function playerZoneMap()
     return nil
 end
 
+-- Zephras Isle has two zone map IDs in the client (OneForAll ZoneLevels); the data uses 2521
+local MAP_ALIAS = { [2665] = 2521 }
+
 function QR.RateZone(uiMap)
+    uiMap = MAP_ALIAS[uiMap] or uiMap
     if not (QR.ready and uiMap) then return nil end
     local pl = UnitLevel("player") or 1
     if pl >= maxLevel() then return nil end
     local lv = QR_GEN and QR_GEN.zlv and QR_GEN.zlv[uiMap]
     if not lv or lv[1] - pl > 4 or lv[2] <= E.GrayLevel(pl) then return nil end
-    local cuts = QR_GEN.zdist and QR_GEN.zdist[math.max(1, math.min(59, pl))]
-    local ncuts = QR_GEN.zcount and QR_GEN.zcount[math.max(1, math.min(59, pl))]
-    if not (cuts and ncuts) then return nil end
-    -- the standard is built at the default pace: the map's quests are estimated the same way (review 2026-11-23)
-    local cfg = QR.DEFAULTS
+    -- your settings and measured pace, as for the quests (user 2026-11-26); the quests' standard at the same pace
+    local cfg = QR.CfgFor(pl)
+    local cuts = D.MapDist(pl, cfg)
+    local B = E.Baseline(pl, cfg)
+    if not cuts or B <= 0 then return nil end
     local list = D.MapQuests(uiMap)
     local onMap = {}
     for _, id in ipairs(list) do onMap[id] = true end
@@ -1166,9 +1322,9 @@ function QR.RateZone(uiMap)
         openMemo[id] = ok
         return ok
     end
-    local items, good, seenKey = {}, 0, {}
+    local items, good, open, seenKey, nMid, H = {}, 0, 0, {}, 0, 0
     -- two records of the same quest (WoW Forever re-adds some with a new ID: To Serve Kum'isha 2521 / 93685):
-    -- same title, level, XP, main point and objectives count once (mirror of the build's map_dup_key)
+    -- same title, level, XP, main point and objectives count once
     local function dupKey(rec)
         local parts = {}
         for _, o in ipairs(rec.o or {}) do parts[#parts + 1] = string.format("%d:%d:%d", o.k or 0, o.i or 0, o.n or 0) end
@@ -1183,19 +1339,43 @@ function QR.RateZone(uiMap)
         if rec and rec.c and not rec.cl and rec.ho ~= 1 and not seenKey[key] and openHere(id, 0) then -- no class / holiday quests
             local res = QR.RateCached(id)
             local m = res and res.model
-            -- only quests without XP or with almost none (res.unrated) are left out; a slow quest is not (user 2026-11-24)
-            if m and not res.noData and not m.noXP then
-                local est = E.Quest(m, pl, cfg, 0) -- alone, its own route unshared
-                if est.T > 0 then
-                    items[#items + 1] = { xp = est.XP, t = est.T, route = est.TrouteNear or 0,
-                                          p = { inst = rec.c[1], x = rec.c[2], y = rec.c[3] } }
+            -- only quests without XP or with almost none (res.unrated) are left out; a slow quest is not (user 2026-11-24);
+            -- nor one whose XP the server cuts at your level (6+ levels below you, D.QuestXP; user 2026-11-27 "nobody
+            -- does a quest worth 10 % XP"), like grey ones (the build's xp_reduced); nor a red one, 5+ levels above you
+            -- (user 2026-11-27: not done at that level, "the level is too high"; the build's quest_red)
+            -- and not a max-level quest (user: a max-level quest is not rated on XP; the quest standard leaves it out too)
+            local full = inRange(rec.lv, rec.xl, pl)
+            if m and not res.noData and not m.noXP and full then
+                open = open + 1
+                local est = res.est -- the time its rating uses
+                if est and est.T > 0 then
+                    items[#items + 1] = { xp = est.XP, t = est.T, p = { inst = rec.c[1], x = rec.c[2], y = rec.c[3] } }
+                    if (res.level or 0) >= 2 then nMid, H = nMid + 1, H + est.T end -- the quantity: mid or better
                     if (res.level or 0) >= 3 then good = good + 1 end
                     seenKey[key] = true
                 end
             end
         end
     end
-    if #items == 0 then return nil end
+    if open == 0 then return nil end
+    local fac = UnitFactionGroup and UnitFactionGroup("player") == "Horde" and "H" or "A"
+    local from = playerZoneMap()
+    from = MAP_ALIAS[from] or from
+    local here = from == uiMap
+    local travel -- nil: where you are is not known (a dungeon, no map), the trip is left out
+    local leg
+    if here then
+        leg = QR_GEN.zleave and QR_GEN.zleave[fac] and QR_GEN.zleave[fac][uiMap]
+        if not leg then travel = 0 end -- nowhere to leave to: nothing added
+    elseif from then
+        local row = QR_GEN.zmove and QR_GEN.zmove[fac] and QR_GEN.zmove[fac][from]
+        leg = row and row[uiMap]
+    end
+    if leg then travel = leg[1] / E.TravelSpeed(cfg, pl) + leg[2] end
+    if nMid == 0 then
+        return { level = 0, xph = 0, position = 0, quests = 0, good = 0, hubs = 0, T = 0, travel = travel,
+                 open = open, here = here, located = from ~= nil }
+    end
     -- hubs: greedy disc cover (QT clustering) at nearbyRadius, mirror of the build's hubs_of
     local R0 = cfg.nearbyRadius
     local nb = {}
@@ -1226,8 +1406,7 @@ function QR.RateZone(uiMap)
         table.sort(g)
         hubs[#hubs + 1] = g
     end
-    local here = playerZoneMap() == uiMap
-    local xp, T, centres = 0, 0, {} -- the trip there is not counted (user 2026-11-24)
+    local xp, T, centres = 0, 0, {} -- every quest's XP and time plus the walks; the trip is in the quantity below
     -- nearest-neighbour tour from the first point (user 2026-11-24: the distance between quests counts)
     local function tour(pts)
         local s, cur, rest = 0, pts[1], {}
@@ -1244,11 +1423,10 @@ function QR.RateZone(uiMap)
         return s
     end
     for _, g in ipairs(hubs) do
-        local share = math.min(cfg.nearbyCap, #g)
         local sx, sy, pts = 0, 0, {}
         for _, k in ipairs(g) do
             local it = items[k]
-            xp, T = xp + it.xp, T + it.t - it.route + it.route / share
+            xp, T = xp + it.xp, T + it.t
             sx, sy = sx + it.p.x, sy + it.p.y
             pts[#pts + 1] = it.p
         end
@@ -1267,10 +1445,10 @@ function QR.RateZone(uiMap)
         if bd and bd < math.huge then T = T + E.LegTime(bd, cfg, pl) end
         cur = table.remove(rest, bi)
     end
-    -- how well you level here and how much there is: the geometric mean of the two ranks, so a map weak in either
-    -- is not good (one quick quest is no map to go to; mirror of the build's ZDIST / ZCOUNT)
-    local xph = T > 0 and xp / T * 3600 or 0
-    local pos = math.sqrt(E.Position(xph, { thresholds = cuts }) * E.Position(#items, { thresholds = ncuts }))
-    return { level = E.Level(pos, 0), xph = xph, position = pos, quests = #items, good = good, hubs = #hubs,
-             here = here }
+    -- the quests' XP over their hours and walks, times the quantity H / (H + trip), on the map standard
+    local qty = H / (H + (travel or 0))
+    local xph = T > 0 and xp / T * 3600 * qty or 0
+    local pos = E.Position(xph / B, { thresholds = cuts })
+    return { level = E.Level(pos, 0), xph = xph, position = pos, quests = nMid, good = good, hubs = #hubs,
+             T = H, travel = travel, open = open, here = here, located = from ~= nil }
 end

@@ -144,7 +144,7 @@ end
 -- E.Quest; nil without an open-world route.
 function D.OpenModel(model, cfg)
     if not model.openLegs then return nil end
-    local m = { id = model.id, questXP = model.questXP, center = model.center, inLog = model.inLog, group = model.group,
+    local m = { id = model.id, level = model.level, questXP = model.questXP, center = model.center, inLog = model.inLog, group = model.group,
                 ready = model.ready, progress = model.progress, routeLegs = model.openLegs, routeClear = model.openClear,
                 routeYards = model.openYards, objectives = {}, groups = {} }
     local byGroup = {}
@@ -168,27 +168,28 @@ end
 
 -- Same-level standard (QR_GEN.dist): the 20/40/60/80 % points of R over quests around this level, each
 -- rated at its own level (band edges), and the median R. nil when the database has none.
--- The points are interpolated in (log F, log G) from QR_GEN.distGrid, the same standard built offline for a
--- grid of fight times and gaps, at your fight time and gap (measured or set): R and the band edges always use
--- the same settings (the defaults are grid nodes).
+-- The points are interpolated in (log F, R) from QR_GEN.distGrid, the same standard built offline for a
+-- grid of fight times F and rest per kill R, at your fight time and rest (measured or set): R and the band
+-- edges always use the same settings (the defaults are grid nodes). Rest can be 0: linear in R.
 local function gridPoint(level, cfg)
     local g = QR_GEN and QR_GEN.distGrid
-    if not g or not cfg then return nil end
+    if not g or not g.R or not cfg then return nil end
     local F = cfg.fightBase
-    local G = cfg.gap or (cfg.lootTime + cfg.grindDistance / cfg.walkSpeed)
-    local function bracket(list, v)
+    local Rv = cfg.rest or cfg.restPerKill or 0
+    local function bracket(list, v, lin)
         v = math.max(list[1], math.min(list[#list], v))
         for i = 1, #list - 1 do
             if v <= list[i + 1] then
-                local t = (math.log(v) - math.log(list[i])) / (math.log(list[i + 1]) - math.log(list[i]))
+                local t = lin and (v - list[i]) / (list[i + 1] - list[i])
+                    or (math.log(v) - math.log(list[i])) / (math.log(list[i + 1]) - math.log(list[i]))
                 return i, t
             end
         end
         return #list - 1, 1
     end
     local fi, ft = bracket(g.F, F)
-    local gi, gt = bracket(g.G, G)
-    local nG = #g.G
+    local gi, gt = bracket(g.R, Rv, true)
+    local nG = #g.R
     local L = math.max(1, math.min(59, level))
     local function at(a, b)
         local d = g.d[(a - 1) * nG + b]
@@ -210,6 +211,20 @@ function D.LevelDist(level, cfg)
     if d and #d >= 5 then
         return { math.exp(d[1]), math.exp(d[2]), math.exp(d[4]), math.exp(d[5]) }, math.exp(d[3])
     end
+end
+
+-- The map standard (user 2026-11-26: "the map rating only takes away, so maps come out lower than the quests:
+-- normalise the reductions, and rate the dungeons on that standard"; "only the reductions, concentration and
+-- quantity, no level factor; at most whether you have a mount"): the quest standard's band edges and median x
+-- the typical concentration and quantity reductions of a map (QR_GEN.mapFactor, the build's MAPF), on foot or
+-- mounted as you travel (QR.Estimate.TravelSpeed). nil without data.
+function D.MapDist(level, cfg)
+    local cuts, med = D.LevelDist(level, cfg)
+    local mf = QR_GEN.mapFactor
+    if not (cuts and mf and mf.walk and mf.mount) then return nil end
+    local m = QR.Estimate.TravelSpeed(cfg, level) >= cfg.mountSpeed and mf.mount or mf.walk
+    local f = m.conc * m.qty
+    return { cuts[1] * f, cuts[2] * f, cuts[3] * f, cuts[4] * f }, med * f
 end
 
 -- Name of a dungeon wing / whole-run key (QR_GEN.wing): the locale's wing name, else the client's dungeon name.
@@ -303,6 +318,8 @@ function D.BuildModel(questId)
             p = o.p, pUnknown = o.pu == 1, S = o.S, A = o.A, d = o.d, mobLevel = o.lv, rank = RANK[o.r] or "normal",
             synthetic = o.sy == 1, src = o.src, center = point(o.c), group = o.g, item = o.i, rs = o.rs,
             dRoute = o.dr or 0, dDetour = o.dd or 0, dWing = o.dw, dMult = o.dm, out = o.ox, levelUnknown = o.lu == 1, multiDrop = o.md == 1, altPer = o.ap, presence = o.pr, campWalk = o.cw, trash = o.tr, offRoute = o.di == 1, both = o.bf,
+            perLoot = o.mc, -- items per loot (the build's LOOT_COUNT: a termite mound gives several)
+            incidental = o.inc, -- 1 a random drop, 2 the item that starts the quest: not farmed (the build's random_drop)
         }
         local lo = liveFor(i, o.n)
         obj.liveMatched = lo ~= nil
@@ -342,14 +359,16 @@ function D.BuildModel(questId)
         for _, lg in ipairs(list or {}) do
             local kind = lg[1]
             local first = kind:sub(1, 1)
-            local boat, escort, flight = first == "B", first == "E", first == "F"
-            local label = LEG[(boat or escort or flight) and kind:sub(2) or kind] or kind
+            local boat, escort, flight, swim = first == "B", first == "E", first == "F", first == "W"
+            local label = LEG[(boat or escort or flight or swim) and kind:sub(2) or kind] or kind
             if escort then
                 if not model.ready then legs[#legs + 1] = { label = label, seconds = lg[2], escort = true } end
             elseif not ((model.ready or model.progress) and label == "start") and not (model.ready and label == "target") then
                 if boat or flight then
                     -- ship / zeppelin, or a flight between flight masters (build: fly_route), in seconds
                     legs[#legs + 1] = { label = label, seconds = lg[2], boat = boat or nil, flight = flight or nil }
+                elseif swim then
+                    legs[#legs + 1] = { label = label, yards = lg[2], swim = true } -- water on the way (build: terrain)
                 else
                     legs[#legs + 1] = { label = label, yards = lg[2] }
                     yards = yards + lg[2]
