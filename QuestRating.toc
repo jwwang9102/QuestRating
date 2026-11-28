@@ -12,6 +12,8 @@ Core.lua
 Estimate.lua
 KillTimer.lua
 Data\Generated.lua
+Data\Names_zhTW.lua
+Data\XPUnverified.lua
 Data.lua
 Gear.lua
 Rating.lua

@@ -15,7 +15,48 @@ function D.Init()
         return false, { "Data/Generated.lua" }
     end
     GEN = QR_GEN.quest
+    -- quest XP the game showed you for quests our data has no XP for (rec.xs, runtime only)
+    local seen = QuestRatingDB and QuestRatingDB.seenXP
+    for id, v in pairs(type(seen) == "table" and seen or {}) do
+        local rec = GEN[id]
+        if rec and type(v) == "table" then rec.xs = v end
+    end
+    -- OneForAll's dungeon quest XP (Data/Dungeons liveXPFallback: WoW Forever quest pages, beta values, QuestieDB;
+    -- rec.xf, runtime only). User 2026-11-28: "OneForAll shows them"; every Blackfathom Deeps quest done in game had
+    -- OneForAll's value (971: 6550, our data 2750), so it wins over our data. Not where QuestieDB's live traces (in
+    -- our data) disagree with it: TRACE_WINS.
+    -- dungeon quests with only the Classic value (Data/XPUnverified.lua): WoW Forever raised dungeon quest XP, so
+    -- the Classic value x QR_XP_FOREVER_FACTOR until the game shows it (user 2026-11-28 "multiply them by the ratio")
+    for id in pairs(QR_XP_UNVERIFIED or {}) do
+        local rec = GEN[id]
+        if rec then rec.xu = true end
+    end
+    local TRACE_WINS = { [1654] = true, [8417] = true } -- Test of Righteousness: trace 870, OneForAll 2200; A Troubled Spirit: trace 510 at 52, OneForAll 500 at 50
+    local ofa = _G.OneForAll
+    for _, d in ipairs(type(ofa) == "table" and type(ofa.DUNGEONS) == "table" and ofa.DUNGEONS or {}) do
+        for _, q in ipairs(d.quests or {}) do
+            local rec = q.id and GEN[q.id]
+            local xp, lv = tonumber(q.liveXPFallback), tonumber(q.level) or (rec and rec.lv)
+            if rec and xp and xp > 0 and lv and lv > 0 and not TRACE_WINS[q.id] then
+                rec.xf = { lv, xp }
+            end
+        end
+    end
     return true, {}
+end
+
+-- The XP the game shows for a quest (quest log or the quest giver's page) at your level: kept, and used before
+-- any data (user 2026-11-28: Excavation's quests add up to over 10,000, the data had 3 of 11; our dungeon XP was
+-- often less than half the game's). Returns true when it is new.
+function D.SeeXP(questId, xp)
+    local rec = GEN and GEN[questId]
+    if not (rec and type(xp) == "number" and xp > 0) then return false end
+    local pl = UnitLevel("player") or 1
+    if rec.xs and rec.xs[1] == pl and rec.xs[2] == xp then return false end
+    rec.xs = { pl, xp }
+    QuestRatingDB.seenXP = type(QuestRatingDB.seenXP) == "table" and QuestRatingDB.seenXP or {}
+    QuestRatingDB.seenXP[questId] = rec.xs
+    return true
 end
 
 ---------------------------------------------------------------------------------------------
@@ -70,6 +111,15 @@ end
 function D.QuestXP(rec, playerLevel)
     local lv, xp = rec.xl or 0, rec.xp or 0
     local maxLevel = (GetMaxPlayerLevel and GetMaxPlayerLevel()) or 60
+    if rec.xs and (rec.lv or 0) > 0 then
+        -- seen in game (D.SeeXP): back to the full XP at the quest's own level, by the same level scaling
+        local seenMult = math.min(10, math.max(1, 2 * (rec.lv - rec.xs[1]) + 20))
+        lv, xp = rec.lv, rec.xs[2] * 10 / seenMult
+    elseif rec.xf then
+        lv, xp = rec.xf[1], rec.xf[2] -- OneForAll's value: the full XP at the quest's level
+    elseif rec.xu then
+        xp = xp * (QR_XP_FOREVER_FACTOR or 1) -- Classic value of a dungeon quest, raised by the measured ratio
+    end
     if lv <= 0 or xp <= 0 or playerLevel >= maxLevel then return 0 end
     local mult = math.min(10, math.max(1, 2 * (lv - playerLevel) + 20))
     xp = xp * mult / 10
@@ -227,6 +277,30 @@ function D.MapDist(level, cfg)
     return { cuts[1] * f, cuts[2] * f, cuts[3] * f, cuts[4] * f }, med * f
 end
 
+-- A quest's title in the client's language: the client's (cached quests only), else the official zhTW name from
+-- QuestieDB (Data/Names_zhTW.lua, QR_NAMES_ZHTW), else our English title (user 2026-11-27: no English names).
+local titleAsked = {}
+function D.Title(questId)
+    local t = C_QuestLog and C_QuestLog.GetTitleForQuestID and C_QuestLog.GetTitleForQuestID(questId)
+    if type(t) == "string" and t ~= "" then return t end
+    t = QR_NAMES_ZHTW and QR_NAMES_ZHTW[questId]
+    if t then return t end
+    -- no official name in QuestieDB (mostly WoW Forever's own quests): ask the client once, its name comes next time
+    if C_QuestLog and C_QuestLog.RequestLoadQuestByID and not titleAsked[questId] then
+        titleAsked[questId] = true
+        pcall(C_QuestLog.RequestLoadQuestByID, questId)
+    end
+    local rec = GEN and GEN[questId]
+    return rec and rec.t or tostring(questId)
+end
+
+-- A quest whose XP is only the old Classic value, not checked for WoW Forever (Data/XPUnverified.lua), and not
+-- seen in game yet
+function D.XPUnverified(questId)
+    local rec = GEN and GEN[questId]
+    return QR_XP_UNVERIFIED and QR_XP_UNVERIFIED[questId] and not (rec and (rec.xs or rec.xf)) and true or false
+end
+
 -- Name of a dungeon wing / whole-run key (QR_GEN.wing): the locale's wing name, else the client's dungeon name.
 function D.WingName(key)
     if L.WING and L.WING[key] then return L.WING[key] end
@@ -268,7 +342,7 @@ end
 local function clientQuestXP(questId)
     if not GetQuestLogRewardXP then return nil end
     local ok, xp = pcall(GetQuestLogRewardXP, questId)
-    if ok and type(xp) == "number" and xp > 0 then return xp end
+    if ok and type(xp) == "number" and xp > 0 then D.SeeXP(questId, xp); return xp end
 end
 
 -- questId -> model (see Estimate.Quest), or nil, reason.
@@ -276,9 +350,8 @@ function D.BuildModel(questId)
     local rec = GEN and GEN[questId]
     if not rec then return nil, string.format(L.MSG_UNKNOWN_QUEST, questId) end
     local pl = UnitLevel("player") or 1
-    local title = C_QuestLog and C_QuestLog.GetTitleForQuestID and C_QuestLog.GetTitleForQuestID(questId)
     local model = {
-        id = questId, name = title or rec.t, level = rec.lv, requiredLevel = rec.ml,
+        id = questId, name = D.Title(questId), level = rec.lv, requiredLevel = rec.ml,
         questXP = D.QuestXP(rec, pl), dungeon = rec.dg == 1, noData = rec.nd and true or false,
         group = rec.gq == 1, -- group quest: a party of 3-5 (user 2026-11-23)
         center = point(rec.c), map = rec.m, flags = {}, extra = {}, objectives = {}, groups = {},

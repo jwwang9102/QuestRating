@@ -13,6 +13,9 @@ QR.DEFAULTS = {
     -- orangeRest seconds of rest per kill instead (deaths are not counted)
     orangeFight = { [3] = 1.25, [4] = 1.5 },
     orangeRest = { [3] = 2, [4] = 5 },
+    -- a red quest (5+ levels above you; user 2026-11-27): false = always 很低 (not recommended); true = rated like a
+    -- 4-levels-above orange quest and shown, while maps, route sharing and every other calculation still leave it out
+    rateAboveRange = false,
     eliteFactor = 3,
     rareFactor = 2,
     lootTime = 4,           -- seconds per kill to loot

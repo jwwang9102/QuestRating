@@ -79,8 +79,7 @@ end
 local FOLLOW_REASONS = 2
 local function followUpLine(questId)
     local rec = D.Record(questId)
-    local title = (C_QuestLog and C_QuestLog.GetTitleForQuestID and C_QuestLog.GetTitleForQuestID(questId))
-        or (rec and rec.t) or tostring(questId)
+    local title = D.Title(questId)
     local level = rec and rec.lv and rec.lv > 0 and string.format("[%d] ", rec.lv) or ""
     -- a needed quest before the rest that is grey for you (another branch of the chain): its name only
     if rec and QR.Estimate.QuestGray(rec.lv, UnitLevel("player") or 1) then return level .. title end

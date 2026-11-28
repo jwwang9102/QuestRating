@@ -242,6 +242,8 @@ function E.Quest(model, playerLevel, cfg, nearby, party)
     -- an orange quest (user 2026-11-27, by the quest's level): 3 levels above you +25 % fight and rest, 4 levels
     -- +50 % (cfg.orangeFight); with no rest at all, cfg.orangeRest seconds per kill instead. Mirror of the build's rate.
     local d = (model.level or 0) - playerLevel
+    -- a red quest (5+ above) gets here only when cfg.rateAboveRange rates it: with the +4 rate (user 2026-11-27)
+    if d > 4 then d = 4 end
     local of = cfg.orangeFight and cfg.orangeFight[d]
     if of then
         local rest0 = cfg.rest or cfg.restPerKill or 0
@@ -368,6 +370,11 @@ function E.DungeonPlan(model, playerLevel, cfg, noRoute, shared)
                 local got = noRoute and 0 or (obj.dRoute + (shared and 0 or (obj.dDetour or 0))) * p
                 fsum, fn = fsum + min(1, got / need), fn + 1
                 if got < need - 1e-9 then pend[#pend + 1] = { obj = obj, rest = need - got, p = p, kxp = kxp } end
+                -- several drops and one run likely gets too few (the dungeon rating's only partial quest, user
+                -- 2026-11-28): multiFrac is this objective's part, the lowest such part
+                if need > 1 and obj.kind == "item" and not obj.fromObject and got < need - 1e-9 then
+                    plan.multiFrac = min(plan.multiFrac or 1, got / need)
+                end
             end
         end
     end

@@ -101,6 +101,7 @@ local function build(panel, noTitle)
     y = keyBox(panel, L.OPT_TRACKER_REASONS, "trackerReasons", y, 0, 2)
     y = checkbox(panel, L.OPT_SHOW_TOOLTIP, "showTooltip", y)
     y = checkbox(panel, L.OPT_SHOW_DROPRATE, "showDropRate", y)
+    y = checkbox(panel, L.OPT_RATE_ABOVE_RANGE, "rateAboveRange", y)
     y = keyBox(panel, L.OPT_LOG_WIDTH, "questLogExtraWidth", y, 0, 400)
     y = y - 10
 

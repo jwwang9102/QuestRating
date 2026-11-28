@@ -153,14 +153,10 @@ local function isOfaPin(owner)
     return false
 end
 
-local adding = false
-local function addDungeonLines(tt)
-    if adding then return end
-    local owner = tt:GetOwner()
-    local e = owner and owner.entry
-    if not (e and e.list and e.kind == "dungeon" and isOfaPin(owner)) then return end
+-- The rated wings of OneForAll dungeon records: { { key, r = QR.RateWing(key) }, ... } (incl. "outside its levels")
+local function wingLines(list)
     local seen, lines = {}, {}
-    for _, d in ipairs(e.list) do
+    for _, d in ipairs(list) do
         for _, key in ipairs(wingsOf(d)) do
             if not seen[key] then
                 seen[key] = true
@@ -169,11 +165,15 @@ local function addDungeonLines(tt)
             end
         end
     end
-    if #lines == 0 then return end
-    adding = true
+    return lines
+end
+
+-- The rating of each wing and its details (run time, quests to take, levels) as tooltip lines.
+-- named: put the wing's name after each rating line
+local function addWingLines(tt, lines, named)
     for _, it in ipairs(lines) do
         local r = it.r
-        local name = (#lines > 1 or #e.list > 1) and ("  " .. QR.Data.WingName(it.key)) or ""
+        local name = named and ("  " .. QR.Data.WingName(it.key)) or ""
         if r.noData then
             tt:AddLine(string.format(L.DUNGEON_REC, QR.UI.colorize(r.noDataText or L.DUNGEON_NO_DATA, QR.UI.GRAY)) .. name, 1, 1, 1)
         elseif r.outside then
@@ -188,19 +188,46 @@ local function addDungeonLines(tt)
             tt:AddLine(L.DUNGEON_REC_MAX, 0.8, 0.8, 0.8)
         else
             tt:AddLine(string.format(L.DUNGEON_REC_DETAIL, r.xph, r.medianXph or 0), 0.8, 0.8, 0.8)
+            local all = (r.xpKill or 0) + (r.xpQuest or 0)
+            if all > 0 and r.T and r.T > 0 then
+                local h = 3600 / r.T
+                tt:AddLine(string.format(L.DUNGEON_REC_SPLIT, r.xpQuest * h, r.xpQuest / all * 100,
+                    r.xpKill * h, r.xpKill / all * 100), 0.8, 0.8, 0.8)
+            end
         end
+        if not (r.outside or r.noData) and r.T and r.T > 0 then
+            local w = QR_GEN.wing[it.key]
+            tt:AddLine(string.format(L.DUNGEON_REC_TIME, math.floor(r.T / 60 + 0.5), math.floor(((w and w.t) or 0) / 60 + 0.5)),
+                0.8, 0.8, 0.8)
+        end
+        if it.key == "SM" then tt:AddLine(L.DUNGEON_REC_SM_RUN, 0.8, 0.8, 0.8) end
         if (r.quests or 0) > 0 then tt:AddLine(string.format(L.DUNGEON_REC_QUESTS, r.quests), 0.8, 0.8, 0.8) end
+        if not r.noData and (r.assumed or 0) > 0 then
+            tt:AddLine(string.format(L.DUNGEON_ASSUMED, r.assumed), 0.8, 0.8, 0.8)
+        end
         if not r.noData and (r.xpUnknown or 0) > 0 then
             tt:AddLine(string.format(L.DUNGEON_XP_PARTIAL, r.xpUnknown), 0.8, 0.8, 0.8)
+        end
+        if r.comps and #r.comps > 0 and not (r.outside or r.noData) then
+            -- every quest the rating counts, with its quest XP (user 2026-11-27: to check where the XP comes from)
+            local list = {}
+            for _, c in ipairs(r.comps) do list[#list + 1] = c end
+            table.sort(list, function(a, b) return (a.xp - (a.kx or 0)) > (b.xp - (b.kx or 0)) end)
+            tt:AddLine(L.DUNGEON_COUNTED_TITLE, 0.8, 0.8, 0.8)
+            for i, c in ipairs(list) do
+                if i > 12 then tt:AddLine(string.format(L.DUNGEON_NEED_MORE, #list - 12), 0.6, 0.6, 0.6); break end
+                tt:AddLine(string.format(L.DUNGEON_COUNTED_LINE, QR.Data.Title(c.id), c.xp - (c.kx or 0),
+                    math.floor((c.t or 0) / 60 + 0.5)) .. (c.assumed and L.DUNGEON_COUNTED_ASSUMED or "")
+                    .. (c.part and string.format(L.DUNGEON_COUNTED_PART, c.part * 100) or "")
+                    .. (QR.Data.XPUnverified(c.id) and L.DUNGEON_XP_UNVERIFIED or ""), 0.8, 0.8, 0.8)
+            end
         end
         if r.need and #r.need > 0 then
             -- the quests to take for this rating (a prerequisite not done yet: marked), and the rating without them
             tt:AddLine(L.DUNGEON_NEED_TITLE, 0.8, 0.8, 0.8)
             for i, c in ipairs(r.need) do
                 if i > 8 then tt:AddLine(string.format(L.DUNGEON_NEED_MORE, #r.need - 8), 0.6, 0.6, 0.6); break end
-                local rec = QR.Data.Record(c.id)
-                local title = (C_QuestLog and C_QuestLog.GetTitleForQuestID and C_QuestLog.GetTitleForQuestID(c.id))
-                    or (rec and rec.t) or tostring(c.id)
+                local title = QR.Data.Title(c.id)
                 tt:AddLine("    " .. title .. (c.open and "" or L.DUNGEON_NEED_PRE), 0.8, 0.8, 0.8)
             end
             if r.levelTaken ~= r.level then tt:AddLine(string.format(L.DUNGEON_WITHOUT, word(r.levelTaken)), 0.8, 0.8, 0.8) end
@@ -211,8 +238,67 @@ local function addDungeonLines(tt)
             tt:AddLine(string.format(fmt, r.lo, r.hi), 0.8, 0.8, 0.8)
         end
     end
+end
+
+local adding = false
+local function addDungeonLines(tt)
+    if adding then return end
+    local owner = tt:GetOwner()
+    local e = owner and owner.entry
+    if not (e and e.list and e.kind == "dungeon" and isOfaPin(owner)) then return end
+    local lines = wingLines(e.list)
+    if #lines == 0 then return end
+    adding = true
+    addWingLines(tt, lines, #lines > 1 or #e.list > 1)
     tt:Show() -- resize; the guard stops this OnShow from adding the lines again
     adding = false
+end
+
+---------------------------------------------------------------------------------------------
+-- OneForAll's dungeon window (user 2026-11-27): the rating at the top right of the dungeon's header band, seen on
+-- every page of it (bosses / introduction, map, quests, key); the details in its tooltip. OneForAll calls
+-- FLT.DungeonHeaderHook(d, band) each time it draws a dungeon (UI\Dungeons.lua detail._render).
+---------------------------------------------------------------------------------------------
+local headBtn
+local function headerHook(d, band)
+    if not headBtn then
+        headBtn = CreateFrame("Button", nil, band)
+        headBtn:SetPoint("TOPRIGHT", band, "TOPRIGHT", -14, -12)
+        headBtn:SetSize(300, 18)
+        headBtn:SetFrameLevel(band:GetFrameLevel() + 5)
+        headBtn.text = headBtn:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+        headBtn.text:SetPoint("RIGHT")
+        headBtn.text:SetJustifyH("RIGHT")
+        headBtn:SetScript("OnEnter", function(self)
+            if not self.lines then return end
+            GameTooltip:SetOwner(self, "ANCHOR_BOTTOMLEFT")
+            GameTooltip:AddLine(L.DUNGEON_HEAD_TT, 1, 0.82, 0)
+            local ok = pcall(addWingLines, GameTooltip, self.lines, #self.lines > 1)
+            if not ok then GameTooltip:AddLine(L.NO_DATA, 0.6, 0.6, 0.6) end
+            GameTooltip:Show()
+        end)
+        headBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    end
+    if headBtn:GetParent() ~= band then headBtn:SetParent(band) end
+    local lines = d and wingLines({ d }) or {}
+    headBtn.lines = #lines > 0 and lines or nil
+    if #lines == 0 then headBtn:Hide(); return end
+    local parts = {}
+    for _, it in ipairs(lines) do
+        local r = it.r
+        local w
+        if r.noData then w = QR.UI.colorize(L.DUNGEON_NO_DATA_SHORT, QR.UI.GRAY)
+        elseif r.outside then w = QR.UI.colorize(string.format(L.DUNGEON_OUTSIDE, r.lo, r.hi), QR.UI.GRAY)
+        else w = word(r.level) end
+        if #lines > 1 then w = QR.Data.WingName(it.key) .. " " .. w end
+        if not (r.noData or r.outside) and r.T and r.T > 0 then
+            w = w .. string.format(L.DUNGEON_HEAD_TIME, math.floor(r.T / 60 + 0.5))
+        end
+        parts[#parts + 1] = w
+    end
+    headBtn.text:SetText(string.format(L.DUNGEON_REC, table.concat(parts, "  ")))
+    headBtn:SetWidth(math.max(60, (headBtn.text:GetStringWidth() or 200) + 4))
+    headBtn:Show()
 end
 
 ---------------------------------------------------------------------------------------------
@@ -262,6 +348,10 @@ QR.RegisterReady(function()
     end)
     if WorldMapFrame.OnMapChanged then
         hooksecurefunc(WorldMapFrame, "OnMapChanged", function() pcall(updateZoneText) end)
+    end
+    local ofa = _G.OneForAll
+    if type(ofa) == "table" then
+        ofa.DungeonHeaderHook = function(d, band) pcall(headerHook, d, band) end
     end
     GameTooltip:HookScript("OnShow", function(tt)
         local ok = pcall(addDungeonLines, tt)

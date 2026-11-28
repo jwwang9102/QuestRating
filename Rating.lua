@@ -20,6 +20,18 @@ function QR.InvalidateQuest(questId)
 end
 
 -- Ratings that only change with gear, talents or settings (models stay valid).
+-- the quest giver's page shows the quest's XP (GetRewardXP): kept for quests without XP data (Data.lua D.SeeXP)
+QR.RegisterReady(function()
+    if not (CreateFrame and GetRewardXP and GetQuestID) then return end
+    local f = CreateFrame("Frame")
+    f:RegisterEvent("QUEST_DETAIL")
+    f:SetScript("OnEvent", function()
+        local ok, id = pcall(GetQuestID)
+        local ok2, xp = pcall(GetRewardXP)
+        if ok and ok2 and id and D.SeeXP(id, xp) then QR.InvalidateQuest(id) end
+    end)
+end)
+
 function QR.InvalidateRatings()
     wipe(rateCache)
     wipe(wingCache)
@@ -211,18 +223,42 @@ local function runCompanions(model, pl, cfg, all)
             if other and other.run and other.insideLeft and not other.offRoute and not other.noData
                 and #other.missing == 0 then -- something to do in the run, with data
                 taken[id] = true
-                -- its share: what the base route finishes (its own detour is its own business)
-                local op = (not other.ready) and E.DungeonPlan(other, pl, cfg, false, true) or nil
-                local frac = op and op.frac or 1
                 -- its quest XP at the level rated (a follow-up in a chain: that level; the client's live value
                 -- only at your own level)
                 local qxp = (other.xpFromClient and pl == (UnitLevel("player") or 1)) and other.questXP
                     or D.QuestXP(rec, pl)
-                out[#out + 1] = { id = id, xp = frac * (qxp or 0), t = cfg.fixedTime, taken = inLogQuest(id),
-                                  open = openToYou(id, rec, pl) }
+                if all and not other.ready then
+                    -- the dungeon rating (user 2026-11-27 "every dungeon's quest XP is counted at most half"; 11-28
+                    -- "the only part to take a share of is several drops that one run is likely not to get", "its own
+                    -- detour is not extra: the normal full clear already takes that time"): the whole quest XP on this
+                    -- trip, plus its objectives outside the dungeon; only a quest needing several drops one run is
+                    -- short of counts the part one run gets (no catch-up). The detour's spawns count as reached.
+                    local op = E.DungeonPlan(other, pl, cfg, false, false)
+                    local kx = op.outX
+                    out[#out + 1] = { id = id, xp = (op.multiFrac or 1) * (qxp or 0) + kx, kx = kx,
+                                      t = cfg.fixedTime + op.outT, part = op.multiFrac,
+                                      taken = inLogQuest(id), open = openToYou(id, rec, pl) }
+                else
+                    -- a companion in one quest's run: what the base route finishes (its own detour is its own business)
+                    local op = (not other.ready) and E.DungeonPlan(other, pl, cfg, false, true) or nil
+                    local frac = op and op.frac or 1
+                    out[#out + 1] = { id = id, xp = frac * (qxp or 0), t = cfg.fixedTime, taken = inLogQuest(id),
+                                      open = openToYou(id, rec, pl) }
+                end
             elseif all and other and other.run and not other.insideLeft and not other.noData and #other.missing == 0 then
                 taken[id] = true
                 outside[#outside + 1] = id
+            elseif all and other and (other.noData or #other.missing > 0 or other.offRoute) then
+                -- (the dungeon rating only) a quest of this dungeon whose objectives cannot be estimated (WoW Forever's
+                -- new dungeons: places unknown, level-scaling mobs; user 2026-11-27: Dalaran showed 0 % quest XP with
+                -- five quests open): its quest XP with the run, done along it (assumed: no own time but the talks)
+                local qxp = (other.xpFromClient and pl == (UnitLevel("player") or 1)) and other.questXP
+                    or D.QuestXP(rec, pl)
+                if (qxp or 0) > 0 then
+                    taken[id] = true
+                    out[#out + 1] = { id = id, xp = qxp, t = cfg.fixedTime, taken = inLogQuest(id),
+                                      open = openToYou(id, rec, pl), assumed = true }
+                end
             end
         end
     end
@@ -572,7 +608,7 @@ local function buildReasons(res, model, est, cfg)
     end
     if res.followBonus and res.followBonus > 0 then
         local frec = D.Record(res.followBonusId)
-        add(string.format(L.REASON_FOLLOW_BONUS, frec and frec.t or "?", res.followBonus))
+        add(string.format(L.REASON_FOLLOW_BONUS, frec and D.Title(res.followBonusId) or "?", res.followBonus))
     end
     -- a grey quest: that alone explains the rating
     if not res.atMax and E.QuestGray(model.level, res.playerLevel) then
@@ -686,7 +722,7 @@ local function maxReasons(res, pts, gearText, gear, T)
     if gear and gear.loading then r[#r + 1] = L.REASON_GEAR_LOADING end
     if res.followBonus and res.followBonus > 0 then
         local frec = D.Record(res.followBonusId)
-        r[#r + 1] = string.format(L.REASON_FOLLOW_BONUS, frec and frec.t or "?", res.followBonus)
+        r[#r + 1] = string.format(L.REASON_FOLLOW_BONUS, frec and D.Title(res.followBonusId) or "?", res.followBonus)
     end
     return r
 end
@@ -735,9 +771,13 @@ function QR.Rate(questId)
     -- above your level range (5+ levels, red; user 2026-11-27 "a red quest is always very low, the reason: beyond the
     -- level range"): before anything else, whatever data it has
     if res.playerLevel < maxLevel() and (model.level or 0) >= res.playerLevel + 5 then
-        res.level, res.position, res.outOfRange = 0, 0, true
-        res.reasons = { string.format(L.REASON_OUT_OF_RANGE, model.level - res.playerLevel) }
-        return res
+        res.outOfRange = true
+        -- the setting (user 2026-11-27): rate it like a +4 orange quest (E.Quest caps the level gap at 4), shown only
+        if not cfg.rateAboveRange then
+            res.level, res.position = 0, 0
+            res.reasons = { string.format(L.REASON_OUT_OF_RANGE, model.level - res.playerLevel) }
+            return res
+        end
     end
     -- a dungeon quest further down the chain: named in the reasons; the chain estimate decides its worth
     if not model.dungeon then
@@ -937,6 +977,9 @@ function QR.Rate(questId)
         res.level, res.keyQuest = E.Level(res.position, (res.bonus or 0) + 2), "k"
     end
     res.reasons = buildReasons(res, model, est, cfg)
+    if res.outOfRange then -- rated by the setting (rateAboveRange): say so first
+        table.insert(res.reasons, 1, string.format(L.REASON_OUT_OF_RANGE_RATED, model.level - res.playerLevel))
+    end
     return res
 end
 
@@ -972,7 +1015,7 @@ function QR.OwnRating(questId)
         local pl, rec = res.playerLevel, D.Record(questId)
         local lv = math.min(59, math.max(pl, (rec and rec.lv or 0) > 0 and rec.lv or pl))
         local R, cuts = res.R, res.cuts
-        if lv ~= pl then
+        if lv ~= pl and not res.outOfRange then -- (a red quest rated by rateAboveRange keeps its +4 rate)
             local cfg = QR.CfgFor(lv)
             local est, B = soloEstimate(questId, lv, cfg), E.Baseline(lv, cfg)
             local c = D.LevelDist(lv, cfg)
@@ -987,7 +1030,7 @@ function QR.OwnRating(questId)
     end
     if res.followBonus and res.followBonus > 0 then
         local frec = D.Record(res.followBonusId)
-        skip[string.format(L.REASON_FOLLOW_BONUS, frec and frec.t or "?", res.followBonus)] = true
+        skip[string.format(L.REASON_FOLLOW_BONUS, frec and D.Title(res.followBonusId) or "?", res.followBonus)] = true
     end
     local reasons = {}
     for _, r in ipairs(res.reasons or {}) do if not skip[r] then reasons[#reasons + 1] = r end end
@@ -1151,8 +1194,11 @@ function rateWing(key)
         local rec = D.Record(id)
         local est = soloEstimate(id, pl, cfg)
         if rec and est then
-            comps[#comps + 1] = { id = id, xp = est.XP, t = est.T, taken = inLogQuest(id), open = openToYou(id, rec, pl),
-                                  outside = true }
+            comps[#comps + 1] = { id = id, xp = est.XP, kx = est.mobXP or 0, t = est.T, taken = inLogQuest(id),
+                                  open = openToYou(id, rec, pl), outside = true }
+        elseif rec and D.QuestXP(rec, pl) > 0 then -- no estimate: its XP with the talk time (user 2026-11-27)
+            comps[#comps + 1] = { id = id, xp = D.QuestXP(rec, pl), t = cfg.fixedTime, taken = inLogQuest(id),
+                                  open = openToYou(id, rec, pl), outside = true, assumed = true }
         end
     end
     -- follow-ups of the run's quests that are talks or one short fight (user 2026-11-27: "a chain from an item a
@@ -1186,10 +1232,18 @@ function rateWing(key)
                 for _, x in ipairs(frec.ex or {}) do if inComps[x] then sibling = true end end
                 if not inComps[f.id] and not sibling and (frec.ml or 0) <= pl and inR and shortStep(f.id, frec) then
                     local est = soloEstimate(f.id, pl, cfg)
+                    local fxp = (not est) and D.QuestXP(frec, pl) or 0
                     if est then
                         inComps[f.id] = true
-                        comps[#comps + 1] = { id = f.id, xp = est.XP, t = est.T, taken = taken or inLogQuest(f.id), open = true,
-                                              outside = true, follow = true }
+                        comps[#comps + 1] = { id = f.id, xp = est.XP, kx = est.mobXP or 0, t = est.T,
+                                              taken = taken or inLogQuest(f.id), open = true, outside = true, follow = true }
+                        addFollow(f.id, depth + 1, taken or inLogQuest(f.id))
+                    elseif fxp > 0 then
+                        -- a talk / delivery step with no measurable route (Return of the Ring): its XP, the talk time
+                        -- (user 2026-11-27: the dungeon's quest XP was counted at most half)
+                        inComps[f.id] = true
+                        comps[#comps + 1] = { id = f.id, xp = fxp, t = cfg.fixedTime, taken = taken or inLogQuest(f.id),
+                                              open = true, outside = true, follow = true, assumed = true }
                         addFollow(f.id, depth + 1, taken or inLogQuest(f.id))
                     end
                 end
@@ -1203,7 +1257,11 @@ function rateWing(key)
     -- rating without them)
     local xp0, T0 = xp, T
     local need = {}
+    -- where the XP comes from (user 2026-11-27): the run's kills and the kills of quests done outside it (c.kx),
+    -- the rest is quest XP
+    local killXP = xp
     for _, c in ipairs(comps) do
+        killXP = killXP + (c.kx or 0)
         xp, T = xp + c.xp, T + c.t
         if c.taken then xp0, T0 = xp0 + c.xp, T0 + c.t
         elseif c.follow then -- a follow-up of a quest not taken: comes with it, not one to take now
@@ -1222,6 +1280,7 @@ function rateWing(key)
         return E.Level(E.Position(xph / B, { thresholds = cuts }), 0), xph
     end
     res.level, res.xph = level(xp, T)
+    res.xpKill, res.xpQuest = killXP, math.max(0, xp - killXP)
     res.levelTaken, res.xphTaken = level(xp0, T0)
     res.medianXph = medR and B > 0 and medR * B or nil
     if res.level == nil then res.noData = true end
@@ -1234,6 +1293,10 @@ function rateWing(key)
         if rec and not (rec.xp and rec.xp > 0) and not rec.x0 then unknown = unknown + 1 end
     end
     res.xpUnknown = unknown
+    local assumed = 0
+    for _, c in ipairs(comps) do if c.assumed then assumed = assumed + 1 end end
+    res.assumed = assumed
+    res.comps = comps -- every quest counted, for the tooltip's list
     if not res.atMax and #comps > 0 and unknown == #comps then
         res.noData, res.noDataText = true, L.DUNGEON_XP_UNKNOWN
     end
